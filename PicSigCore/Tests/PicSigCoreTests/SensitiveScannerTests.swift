@@ -89,6 +89,50 @@ final class SensitiveScannerTests: XCTestCase {
         XCTAssertTrue(scan("张伟").isEmpty, "a bare name is below the default confidence")
     }
 
+    /// Vision reports most real lines at confidence 0.5. That used to halve every
+    /// match's score and drop even checksum-valid phone numbers.
+    func testLowOCRConfidenceDoesNotDropAValidPhoneNumber() {
+        let layout = TextLayout(lines: [
+            RecognizedTextLine(id: 0, text: "13812345678",
+                               box: NormalizedRect(x: 0.1, y: 0.1, width: 0.4, height: 0.03),
+                               confidence: 0.5)
+        ], imageSize: PixelSize(width: 1000, height: 2000))
+        let matches = SensitiveScanner().scan(layout)
+        XCTAssertEqual(matches.map(\.category), [.phoneNumber])
+        XCTAssertGreaterThan(matches.first?.confidence ?? 0, 0.7)
+    }
+
+    func testLabelGluedToTheNameIsStillFound() {
+        XCTAssertEqual(scan("收货人张伟").map(\.value), ["张伟"])
+        XCTAssertEqual(scan("姓名:欧阳娜娜").map(\.value), ["欧阳娜娜"])
+        XCTAssertEqual(scan("收件人：李强 13812345678").map(\.category), [.personName, .phoneNumber])
+    }
+
+    func testTitledNamesNeedNoLabel() {
+        XCTAssertEqual(scan("请联系张先生确认").map(\.value), ["张先生"])
+        XCTAssertEqual(scan("联系小李").map(\.value), ["小李"])
+        XCTAssertEqual(scan("老陈：好的").map(\.value), ["老陈"])
+        XCTAssertTrue(scan("两小时后").isEmpty, "小时 is a word, not a person")
+        XCTAssertEqual(scan("王总说可以").map(\.value), ["王总"])
+    }
+
+    func testBareNameLineIsListedOnlyBelowTheDefaultThreshold() {
+        XCTAssertTrue(scan("张伟").isEmpty)
+        let relaxed = ScanSettings(minConfidence: 0.45)
+        let matches = scan("张伟", settings: relaxed)
+        XCTAssertEqual(matches.map(\.value), ["张伟"])
+        XCTAssertLessThan(matches.first?.confidence ?? 1, 0.6, "a bare name must start unchecked")
+        XCTAssertTrue(scan("设置", settings: relaxed).isEmpty, "UI words without a surname are not names")
+    }
+
+    func testAddressesWithoutProvinceOrWithOCRSpaces() {
+        XCTAssertEqual(scan("浦东新区张江路123号").map(\.category), [.address])
+        XCTAssertEqual(scan("上海市 浦东新区 张江路 123号").map(\.category), [.address])
+        XCTAssertEqual(scan("张江路123号").map(\.category), [.address])
+        XCTAssertEqual(scan("阳光花园3栋2单元501室").map(\.category), [.address])
+        XCTAssertEqual(scan("收货地址：北京市朝阳区建国路88号SOHO现代城A座1203").map(\.category), [.address])
+    }
+
     func testLabelOnTheLineAboveCounts() {
         let layout = TextLayout(lines: [
             RecognizedTextLine(id: 0, text: "持卡人", box: NormalizedRect(x: 0.1, y: 0.10, width: 0.2, height: 0.03)),

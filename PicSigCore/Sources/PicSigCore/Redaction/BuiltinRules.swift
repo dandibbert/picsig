@@ -6,6 +6,38 @@ import Foundation
 /// characters, so `\b\d{11}\b` never matches "手机13812345678". Explicit
 /// look-arounds are used instead.
 public enum BuiltinRules {
+    /// Common surnames, two-character ones first so the alternation prefers
+    /// "欧阳" over "欧" + given name.
+    public static let surnames: [String] = [
+        "欧阳", "上官", "司马", "诸葛", "令狐", "慕容", "尉迟", "皇甫", "长孙", "宇文", "东方", "南宫",
+        "西门", "夏侯", "公孙", "轩辕", "呼延", "独孤", "申屠", "百里", "淳于", "单于", "太史", "端木",
+        "钟离", "鲜于", "宗政", "濮阳", "公冶", "拓跋", "澹台", "公西", "乐正", "公良", "闾丘", "仲孙",
+        "赵", "钱", "孙", "李", "周", "吴", "郑", "王", "冯", "陈", "褚", "卫", "蒋", "沈", "韩", "杨",
+        "朱", "秦", "尤", "许", "何", "吕", "施", "张", "孔", "曹", "严", "华", "金", "魏", "陶", "姜",
+        "戚", "谢", "邹", "喻", "柏", "水", "窦", "章", "云", "苏", "潘", "葛", "奚", "范", "彭", "郎",
+        "鲁", "韦", "昌", "马", "苗", "凤", "花", "方", "俞", "任", "袁", "柳", "唐", "罗", "薛", "雷",
+        "贺", "倪", "汤", "殷", "毕", "郝", "邬", "安", "常", "乐", "于", "时", "傅", "皮", "齐", "康",
+        "伍", "余", "元", "卜", "顾", "孟", "平", "黄", "和", "穆", "萧", "尹", "姚", "邵", "湛",
+        "汪", "祁", "毛", "禹", "狄", "米", "贝", "明", "臧", "计", "伏", "成", "戴", "谈", "宋", "茅",
+        "庞", "熊", "纪", "舒", "屈", "项", "祝", "董", "梁", "杜", "阮", "蓝", "闵", "席", "季", "麻",
+        "强", "贾", "路", "娄", "危", "江", "童", "颜", "郭", "梅", "盛", "林", "刁", "钟", "徐", "邱",
+        "骆", "高", "夏", "蔡", "田", "樊", "胡", "凌", "霍", "虞", "万", "支", "柯", "昝", "管", "卢",
+        "莫", "房", "裘", "缪", "干", "解", "应", "宗", "丁", "宣", "贲", "邓", "郁", "单", "杭", "洪",
+        "包", "诸", "左", "石", "崔", "吉", "钮", "龚", "程", "嵇", "邢", "滑", "裴", "陆", "荣", "翁",
+        "荀", "羊", "於", "惠", "甄", "曲", "封", "芮", "羿", "储", "靳", "汲", "邴", "糜", "松", "井",
+        "段", "富", "巫", "乌", "焦", "巴", "弓", "牧", "隗", "山", "谷", "车", "侯", "宓", "蓬", "全",
+        "郗", "班", "仰", "秋", "仲", "伊", "宫", "宁", "仇", "栾", "暴", "甘", "钭", "厉", "戎", "祖",
+        "武", "符", "刘", "景", "詹", "束", "龙", "叶", "幸", "司", "韶", "郜", "黎", "蓟", "薄", "印",
+        "宿", "白", "怀", "蒲", "邰", "从", "鄂", "索", "咸", "籍", "赖", "卓", "蔺", "屠", "蒙", "池",
+        "乔", "阴", "欧", "夔", "隆", "师", "巩", "厍", "聂", "晁", "勾", "敖", "融", "冷", "訾", "辛",
+        "阚", "那", "简", "饶", "空", "曾", "毋", "沙", "乜", "养", "鞠", "须", "丰", "巢", "关", "蒯",
+        "相", "查", "後", "荆", "红", "游", "竺", "权", "逯", "盖", "益", "桓", "公", "谭", "廖", "付",
+        "覃", "史", "向", "冉", "苟", "翟", "官", "艾", "蒲", "仝", "盘", "占", "祖", "植", "闫"
+    ]
+
+    /// Non-capturing alternation of `surnames`, for interpolation into patterns.
+    public static let surnameGroup = "(?:" + surnames.joined(separator: "|") + ")"
+
     public static let all: [SensitiveRule] = [
         // MARK: Phone numbers
         SensitiveRule(id: "phone.cn.mobile",
@@ -102,12 +134,41 @@ public enum BuiltinRules {
                       baseConfidence: 0.85),
 
         // MARK: Names and addresses
+
+        // A label glued to the name on the same line ("收货人张伟", "姓名:李强").
+        // The generic rule below cannot take these: its look-behind refuses a
+        // name preceded by another Chinese character, which is exactly what a
+        // label without a separator is.
+        SensitiveRule(id: "name.cn.labelled",
+                      category: .personName,
+                      pattern: "(?:收货人|收件人|寄件人|发件人|联系人|姓名|真实姓名|持卡人|户名|开户名|患者|学生|家长|乘客|旅客|申请人|经办人|负责人|业主|租客|房东|客户|用户名|昵称|收款人|付款人|取件人|订票人|投保人|被保险人)[：:\\s]{0,3}(\(surnameGroup)[\\u4e00-\\u9fa5]{1,2})(?![\\u4e00-\\u9fa5])",
+                      captureGroup: 1,
+                      baseConfidence: 0.9),
+        // Surname plus a title or a familiar prefix is a name on its own:
+        // "张先生", "王总", "小李", "老陈".
+        SensitiveRule(id: "name.cn.titled",
+                      category: .personName,
+                      pattern: "(?:(?:小|老|阿)(?!时|师|公|米|全|方|康|常|成|明|平|和|安|江|山|石|路|车|云|水|花|金|白|区|干|向|印|相|关)\(surnameGroup)(?![\\u4e00-\\u9fa5])|\(surnameGroup)[\\u4e00-\\u9fa5]{0,2}(?:先生|女士|小姐|太太|夫人|老师|医生|大夫|护士|律师|经理|总监|主任|老板|同学|师傅|阿姨|叔叔|大哥|大姐|队长|店长|教练|会计|总|工))",
+                      baseConfidence: 0.7,
+                      contextKeywords: ContextKeywords.personName,
+                      contextBoost: 0.2),
         SensitiveRule(id: "name.cn",
                       category: .personName,
-                      pattern: "(?<![\\u4e00-\\u9fa5])(?:赵|钱|孙|李|周|吴|郑|王|冯|陈|褚|卫|蒋|沈|韩|杨|朱|秦|尤|许|何|吕|施|张|孔|曹|严|华|金|魏|陶|姜|戚|谢|邹|喻|柏|水|窦|章|云|苏|潘|葛|奚|范|彭|郎|鲁|韦|昌|马|苗|凤|花|方|俞|任|袁|柳|唐|罗|薛|雷|贺|倪|汤|殷|罗|毕|郝|邬|安|常|乐|于|时|傅|皮|齐|康|伍|余|元|卜|顾|孟|平|黄|和|穆|萧|尹|姚|邵|湛|汪|祁|毛|禹|狄|米|贝|明|臧|计|伏|成|戴|谈|宋|茅|庞|熊|纪|舒|屈|项|祝|董|梁|杜|阮|蓝|闵|席|季|麻|强|贾|路|娄|危|江|童|颜|郭|梅|盛|林|刁|钟|徐|邱|骆|高|夏|蔡|田|樊|胡|凌|霍|虞|万|支|柯|昝|管|卢|莫|房|裘|缪|干|解|应|宗|丁|宣|贲|邓|郁|单|杭|洪|包|诸|左|石|崔|吉|钮|龚|程|嵇|邢|滑|裴|陆|荣|翁|荀|羊|於|惠|甄|曲|封|芮|羿|储|靳|汲|邴|糜|松|井|段|富|巫|乌|焦|巴|弓|牧|隗|山|谷|车|侯|宓|蓬|全|郗|班|仰|秋|仲|伊|宫|宁|仇|栾|暴|甘|钭|厉|戎|祖|武|符|刘|景|詹|束|龙|叶|幸|司|韶|郜|黎|蓟|薄|印|宿|白|怀|蒲|邰|从|鄂|索|咸|籍|赖|卓|蔺|屠|蒙|池|乔|阴|欧|夔|隆|师|巩|厍|聂|晁|勾|敖|融|冷|訾|辛|阚|那|简|饶|空|曾|毋|沙|乜|养|鞠|须|丰|巢|关|蒯|相|查|後|荆|红|游|竺|权|逯|盖|益|桓|公)[\\u4e00-\\u9fa5]{1,3}(?![\\u4e00-\\u9fa5])",
+                      pattern: "(?<![\\u4e00-\\u9fa5])\(surnameGroup)[\\u4e00-\\u9fa5]{1,3}(?![\\u4e00-\\u9fa5])",
                       baseConfidence: 0.42,
                       contextKeywords: ContextKeywords.personName,
                       contextBoost: 0.4),
+        // A line that is nothing but a plausible name — a chat sender, a contact
+        // row, a signature. Too weak to mask on its own, but with the review list
+        // pre-checking only what clears the threshold, it is worth listing so the
+        // user can tick it: below the default threshold it never shows at all.
+        SensitiveRule(id: "name.cn.line",
+                      category: .personName,
+                      pattern: "^\\s*(\(surnameGroup)[\\u4e00-\\u9fa5]{1,2})\\s*$",
+                      captureGroup: 1,
+                      baseConfidence: 0.5,
+                      contextKeywords: ContextKeywords.personName,
+                      contextBoost: 0.35),
         SensitiveRule(id: "name.cn.masked",
                       category: .personName,
                       pattern: "(?<![\\u4e00-\\u9fa5])[\\u4e00-\\u9fa5][*\\u2217]{1,2}(?![\\u4e00-\\u9fa5])",
@@ -115,18 +176,34 @@ public enum BuiltinRules {
                       contextKeywords: ContextKeywords.personName,
                       contextBoost: 0.3,
                       isEnabledByDefault: false),
+        // OCR often puts a space between the parts of an address ("上海市 浦东新区
+        // 张江路 123号"), so every join below tolerates one.
         SensitiveRule(id: "address.cn.detailed",
                       category: .address,
-                      pattern: "[\\u4e00-\\u9fa5]{2,10}(?:省|自治区|特别行政区|市)[\\u4e00-\\u9fa5]{2,12}(?:市|区|县|镇|乡|旗)[\\u4e00-\\u9fa50-9A-Za-z]{2,30}(?:路|街|道|巷|弄|号|小区|花园|大厦|广场|苑|村|栋|单元|室|层|楼)[\\u4e00-\\u9fa50-9A-Za-z\\-]{0,20}",
+                      pattern: "[\\u4e00-\\u9fa5]{2,10}(?:省|自治区|特别行政区|市)\\s?[\\u4e00-\\u9fa5]{1,12}(?:市|区|县|镇|乡|旗)\\s?[\\u4e00-\\u9fa50-9A-Za-z\\s]{1,30}?(?:路|街|道|巷|弄|号|小区|花园|大厦|广场|苑|村|栋|单元|室|层|楼)[\\u4e00-\\u9fa50-9A-Za-z\\-\\s]{0,20}",
                       baseConfidence: 0.78,
                       contextKeywords: ContextKeywords.address,
                       contextBoost: 0.15),
+        // District level, no province or city: "浦东新区张江路123号".
+        SensitiveRule(id: "address.cn.district",
+                      category: .address,
+                      pattern: "[\\u4e00-\\u9fa5]{2,8}(?:区|县|镇)\\s?[\\u4e00-\\u9fa5]{2,12}(?:路|街|道|巷|弄|大道)\\s?[0-9]{1,5}\\s?号(?:[\\u4e00-\\u9fa50-9A-Za-z\\-\\s]{0,16}(?:栋|号楼|幢|座|单元|室|层|楼))?",
+                      baseConfidence: 0.7,
+                      contextKeywords: ContextKeywords.address,
+                      contextBoost: 0.2),
         SensitiveRule(id: "address.cn.street",
                       category: .address,
-                      pattern: "[\\u4e00-\\u9fa5]{2,12}(?:路|街|道|巷|弄)[0-9]{1,5}号(?:[\\u4e00-\\u9fa50-9]{0,12}(?:栋|单元|室|层|楼))?",
-                      baseConfidence: 0.55,
+                      pattern: "[\\u4e00-\\u9fa5]{2,12}(?:路|街|道|巷|弄|大道)\\s?[0-9]{1,5}\\s?号(?:[\\u4e00-\\u9fa50-9A-Za-z\\-\\s]{0,16}(?:栋|号楼|幢|座|单元|室|层|楼))?",
+                      baseConfidence: 0.65,
                       contextKeywords: ContextKeywords.address,
-                      contextBoost: 0.35),
+                      contextBoost: 0.3),
+        // Compound plus unit, no street at all: "阳光花园3栋2单元501室".
+        SensitiveRule(id: "address.cn.compound",
+                      category: .address,
+                      pattern: "[\\u4e00-\\u9fa5]{2,12}(?:小区|花园|公寓|大厦|广场|家园|新村|苑|府|庭|湾|城)\\s?[0-9A-Za-z\\-]{1,6}\\s?(?:栋|号楼|幢|座|单元|期)[\\u4e00-\\u9fa50-9A-Za-z\\-\\s]{0,16}(?:室|号|层|楼|单元)?",
+                      baseConfidence: 0.66,
+                      contextKeywords: ContextKeywords.address,
+                      contextBoost: 0.25),
 
         // MARK: Vehicles
         SensitiveRule(id: "plate.cn",

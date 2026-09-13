@@ -163,7 +163,13 @@ public final class SensitiveScanner: @unchecked Sendable {
                SensitiveValidators.looksLikePlaceholder(value) {
                 confidence *= 0.5
             }
-            confidence = min(0.99, confidence) * min(1, max(0.5, line.confidence))
+            // Vision reports line confidence coarsely — real screenshots come back
+            // as 0.5 for most lines and 1.0 for a few. Multiplying by it outright
+            // pulled a checksum-valid phone number from 0.88 down to 0.44 and
+            // dropped it, which is how whole screens ended up with nothing found.
+            // The OCR score now nudges the confidence instead of gating on it.
+            let ocrFactor = 0.9 + 0.1 * min(1, max(0, line.confidence))
+            confidence = min(0.99, confidence) * ocrFactor
             guard confidence >= self.settings.minConfidence else { return }
 
             results.append(SensitiveMatch(category: entry.rule.category,
