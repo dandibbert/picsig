@@ -25,6 +25,7 @@ jobs:
             git apply --binary --index /tmp/picsig-repair.patch
             python3 - <<'PY'
           from pathlib import Path
+
           path = Path("App/UI/ZoomCanvas.swift")
           source = path.read_text()
           old = "return Size2D(16 / max(1, size.width * scale), 16 / max(1, size.height * scale))"
@@ -32,8 +33,16 @@ jobs:
           if old not in source:
               raise SystemExit("expected ZoomCanvas conversion line not found")
           path.write_text(source.replace(old, new, 1))
+
+          path = Path("Sources/PicSigCore/PrivacyRules.swift")
+          source = path.read_text()
+          old = "let below = r.y >= frontier.maxY - lineHeight * 0.2 && r.y - frontier.maxY <= max(28, lineHeight * 1.45)"
+          new = "let below = r.y >= frontier.maxY - lineHeight * 0.2 && r.y - frontier.maxY <= max(64, lineHeight * 2.8)"
+          if old not in source:
+              raise SystemExit("expected address continuation threshold not found")
+          path.write_text(source.replace(old, new, 1))
           PY
-            git add App/UI/ZoomCanvas.swift
+            git add App/UI/ZoomCanvas.swift Sources/PicSigCore/PrivacyRules.swift
             echo "PICSIG_REPAIR_BOOTSTRAP=1" >> "$GITHUB_ENV"
             git diff --cached --stat
           fi
