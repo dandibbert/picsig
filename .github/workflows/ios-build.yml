@@ -77,8 +77,33 @@ jobs:
           ls -lh build/PicSig-unsigned.ipa
           echo "--- bundle contents ---"
           ls -l "$APP_PATH"
-          echo "--- Info.plist keys ---"
-          plutil -p "$APP_PATH/Info.plist" | head -40
+          echo "--- Info.plist ---"
+          plutil -p "$APP_PATH/Info.plist"
+
+      # A missing usage description is not a build error but crashes the app the
+      # first time it touches the photo library, so it is worth failing here. The
+      # localised bundles are checked too, because losing them downgrades the whole
+      # UI to the development language without any other signal.
+      - name: Validate bundle
+        run: |
+          APP_PATH="build/PicSig.xcarchive/Products/Applications/PicSig.app"
+          fail=0
+          for key in NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription; do
+            if plutil -extract "$key" raw -o - "$APP_PATH/Info.plist" >/dev/null 2>&1; then
+              echo "ok   $key = $(plutil -extract "$key" raw -o - "$APP_PATH/Info.plist")"
+            else
+              echo "MISSING $key"; fail=1
+            fi
+          done
+          for lproj in en.lproj zh-Hans.lproj; do
+            if [ -d "$APP_PATH/$lproj" ]; then
+              echo "ok   $lproj ($(ls "$APP_PATH/$lproj" | tr '\n' ' '))"
+            else
+              echo "MISSING $lproj"; fail=1
+            fi
+          done
+          test -f "$APP_PATH/Assets.car" && echo "ok   Assets.car" || { echo "MISSING Assets.car"; fail=1; }
+          exit $fail
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
