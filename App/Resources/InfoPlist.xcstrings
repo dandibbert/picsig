@@ -1,0 +1,40 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "NSPhotoLibraryAddUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PicSig saves the finished long screenshot back to your library."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把拼好的长截图存回相册。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PicSig reads screenshots and recordings from your library so it can stitch and redact them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要读取相册里的截图和录屏，才能拼接和打码。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
