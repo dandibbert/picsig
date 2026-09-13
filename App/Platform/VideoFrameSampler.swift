@@ -89,13 +89,4 @@ struct VideoFrameSampler {
         }
         return results
     }
-
-    /// Recommended sample rate: fast scrolling needs more frames, and a long
-    /// recording has to stay within the frame budget.
-    static func recommendedFramesPerSecond(duration: Double, budget: Int = 240) -> Double {
-        guard duration > 0 else { return 4 }
-        let ideal = 6.0
-        let allowed = Double(budget) / duration
-        return max(1.5, min(ideal, allowed))
-    }
 }

@@ -43,15 +43,6 @@ enum StitchRenderer {
         }
     }
 
-    /// Small preview used while the user tweaks stitch settings.
-    static func renderPreview(plan: StitchPlan,
-                              sources: [CGImage],
-                              maxLength: Int = 2400,
-                              background: RGBAColor = .white) -> UIImage? {
-        guard let full = render(plan: plan, sources: sources, background: background) else { return nil }
-        return full.resized(longestEdge: maxLength)
-    }
-
     /// Renders a manual layout, applying the canvas style (rounded corners,
     /// borders, shadows) to each placed image.
     static func renderStyled(plan: StitchPlan,

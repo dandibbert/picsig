@@ -38,8 +38,6 @@ struct TextRecognitionService {
         }
 
         static let `default` = Options()
-        /// Faster pass for live previews.
-        static let quick = Options(tileHeight: 3000, computesCharacterBoxes: false)
     }
 
     var options: Options = .default

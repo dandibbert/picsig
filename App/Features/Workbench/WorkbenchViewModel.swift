@@ -85,6 +85,9 @@ final class WorkbenchViewModel {
     private var settings: AppSettings
     private var recomposeTask: Task<Void, Never>?
     private var adjustmentBaseline: ImageAdjustments?
+    /// Bumped on every rebuild so results of a superseded stitch or scan can be
+    /// dropped instead of being applied to a canvas they no longer describe.
+    private var canvasGeneration = 0
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -135,6 +138,8 @@ final class WorkbenchViewModel {
 
     func restitch() async {
         guard !sources.isEmpty else { return }
+        canvasGeneration += 1
+        let generation = canvasGeneration
         statusKey = "workbench.status.stitching"
         let boxes = sources.map(CGImageBox.init)
         let mode = self.mode
@@ -147,6 +152,10 @@ final class WorkbenchViewModel {
                                  preferences: preferences,
                                  manualOverlaps: overlaps)
         }.value
+
+        // Toggling two settings quickly starts two rebuilds; only the newest one
+        // may touch the canvas, or the older result would win the race.
+        guard generation == canvasGeneration else { return }
 
         plan = result.0
         stitched = result.1?.image
@@ -181,9 +190,18 @@ final class WorkbenchViewModel {
         var copy = preferences
         mutate(&copy)
         guard copy != preferences else { return }
+        // A different sample rate means different frames, so the recording has to
+        // be read again; everything else only changes how the frames are joined.
+        let needsResampling = copy.videoFramesPerSecond != preferences.videoFramesPerSecond
         preferences = copy
         settings.stitch = copy
-        Task { await restitch() }
+        Task {
+            if needsResampling, mode == .video, let videoURL {
+                await loadVideoFrames(videoURL)
+            } else {
+                await restitch()
+            }
+        }
     }
 
     func moveSource(from source: IndexSet, to destination: Int) {
@@ -248,11 +266,45 @@ final class WorkbenchViewModel {
 
     // MARK: - Redaction
 
+    /// Size of the canvas space image, worked out arithmetically because the
+    /// masking plan is rebuilt on every checkbox tap and rasterising a cropped
+    /// 20000 pixel image that often would be felt.
+    var canvasSpaceSize: PixelSize {
+        guard let stitched else { return .zero }
+        let crop = document.state.crop
+        let full = PixelSize(width: Int(stitched.size.width), height: Int(stitched.size.height))
+        let cropped = PixelSize(width: max(1, Int((Double(full.width) * crop.width).rounded())),
+                                height: max(1, Int((Double(full.height) * crop.height).rounded())))
+        return document.state.quarterTurns % 2 == 0
+            ? cropped
+            : PixelSize(width: cropped.height, height: cropped.width)
+    }
+
+    /// The image in *canvas space*: cropped, rotated and mirrored, but not yet
+    /// masked or annotated.
+    ///
+    /// Everything the user draws is expressed in this space, and so is everything
+    /// the scanner reports — otherwise a mask planned on the uncropped image would
+    /// be drawn at the wrong place, because `ImageComposer` crops before it masks.
+    private func canvasSpaceImage() -> UIImage? {
+        guard let stitched else { return nil }
+        var image = stitched
+        let state = document.state
+        if state.crop != .full {
+            image = ImageComposer.cropped(image, to: state.crop)
+        }
+        if state.quarterTurns != 0 || state.isMirrored {
+            image = ImageComposer.oriented(image, quarterTurns: state.quarterTurns, mirrored: state.isMirrored)
+        }
+        return image
+    }
+
     func scanForSensitiveInformation() async {
-        guard let stitched, let cgImage = stitched.cgImage else { return }
+        guard let base = canvasSpaceImage(), let cgImage = base.cgImage else { return }
         isScanning = true
         statusKey = "workbench.status.scanning"
         audit = nil
+        let generation = canvasGeneration
 
         let box = CGImageBox(cgImage)
         let coordinator = settings.coordinator
@@ -263,6 +315,15 @@ final class WorkbenchViewModel {
                 return .failure(error)
             }
         }.value
+
+        // Boxes are relative to the image that was scanned; if it has been
+        // restitched meanwhile they would land in the wrong place.
+        guard generation == canvasGeneration else {
+            isScanning = false
+            statusKey = nil
+            needsRescan = true
+            return
+        }
 
         isScanning = false
         statusKey = nil
@@ -280,8 +341,8 @@ final class WorkbenchViewModel {
     }
 
     func rebuildAutomaticRedactions() {
-        guard let stitched else { return }
-        let size = PixelSize(width: Int(stitched.size.width), height: Int(stitched.size.height))
+        let size = canvasSpaceSize
+        guard !size.isEmpty else { return }
         let plan = settings.coordinator.plan(matches: matches, layout: layout, imageSize: size)
         document.replaceAutomaticRedactions(with: plan.items)
         audit = nil
@@ -408,6 +469,7 @@ final class WorkbenchViewModel {
     func verifyRedaction() async {
         guard let stitched else { return }
         statusKey = "workbench.status.verifying"
+        let generation = canvasGeneration
         let base = ImageBox(stitched)
         let state = document.state
         let coordinator = settings.coordinator
@@ -432,6 +494,7 @@ final class WorkbenchViewModel {
         }.value
 
         statusKey = nil
+        guard generation == canvasGeneration else { return }
         switch result {
         case .success(let audit): self.audit = audit
         case .failure(let error): errorMessage = error.localizedDescription
@@ -497,25 +560,65 @@ final class WorkbenchViewModel {
         scheduleRecompose()
     }
 
+    /// Crop is stored in the coordinates of the untouched stitched image, but the
+    /// user draws on the canvas, which may already be cropped, rotated and
+    /// mirrored. Undo those steps before storing the new rectangle, or a second
+    /// crop lands somewhere else entirely.
     func applyCrop(_ rect: NormalizedRect) {
-        document.setCrop(rect)
+        let corner = baseSpacePoint(x: rect.minX, y: rect.minY)
+        let opposite = baseSpacePoint(x: rect.maxX, y: rect.maxY)
+        document.setCrop(NormalizedRect(x: min(corner.x, opposite.x),
+                                        y: min(corner.y, opposite.y),
+                                        width: abs(opposite.x - corner.x),
+                                        height: abs(opposite.y - corner.y)))
+        invalidateScan()
         scheduleRecompose()
+    }
+
+    private func baseSpacePoint(x: Double, y: Double) -> (x: Double, y: Double) {
+        var px = x
+        var py = y
+        // Turns are clockwise, so undoing one turn rotates counter-clockwise.
+        switch ((document.state.quarterTurns % 4) + 4) % 4 {
+        case 1: (px, py) = (y, 1 - x)
+        case 2: (px, py) = (1 - x, 1 - y)
+        case 3: (px, py) = (1 - y, x)
+        default: break
+        }
+        // The renderer mirrors before it rotates, so unmirroring comes last.
+        if document.state.isMirrored { px = 1 - px }
+        let crop = document.state.crop
+        return (crop.x + px * crop.width, crop.y + py * crop.height)
     }
 
     func resetCrop() {
         document.resetCrop()
+        invalidateScan()
         scheduleRecompose()
     }
 
     var isCropped: Bool { document.state.crop != .full }
 
+    /// Cropping or rotating moves every box that was reported for the previous
+    /// geometry, so the findings are dropped rather than drawn in the wrong place.
+    private func invalidateScan() {
+        guard hasScannedOnce, !matches.isEmpty else { return }
+        matches = []
+        layout = .empty
+        audit = nil
+        document.replaceAutomaticRedactions(with: [])
+        needsRescan = true
+    }
+
     func rotate() {
         document.rotate()
+        invalidateScan()
         scheduleRecompose()
     }
 
     func mirror() {
         document.mirror()
+        invalidateScan()
         scheduleRecompose()
     }
 
@@ -540,15 +643,7 @@ final class WorkbenchViewModel {
 
     /// Size of the image that will actually be written, after crop and scaling.
     var exportSize: PixelSize {
-        guard let stitched else { return .zero }
-        let crop = document.state.crop
-        let full = PixelSize(width: Int(stitched.size.width), height: Int(stitched.size.height))
-        let cropped = PixelSize(width: max(1, Int(Double(full.width) * crop.width)),
-                                height: max(1, Int(Double(full.height) * crop.height)))
-        let turned = document.state.quarterTurns % 2 == 0
-            ? cropped
-            : PixelSize(width: cropped.height, height: cropped.width)
-        return settings.export.scale.targetSize(for: turned)
+        settings.export.scale.targetSize(for: canvasSpaceSize)
     }
 
     func export(saveToPhotos: Bool) async {
