@@ -126,7 +126,7 @@ enum RedactionRenderer {
     /// The whole image is drawn, shifted so `rect` lands on the context, rather
     /// than a `cropping(to:)` sub-image: on the simulator a cropped copy of an
     /// extended range bitmap rendered black into an 8 bit context.
-    private static func rgbaPixels(of image: CGImage, in rect: CGRect) -> [UInt8]? {
+    static func rgbaPixels(of image: CGImage, in rect: CGRect) -> [UInt8]? {
         let width = Int(rect.width)
         let height = Int(rect.height)
         guard width > 0, height > 0 else { return nil }
