@@ -37,7 +37,7 @@ enum RedactionRenderer {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return image }
 
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
@@ -82,7 +82,7 @@ enum RedactionRenderer {
 
         // Downsample with no interpolation, then scale back up the same way: the
         // result contains only `columns * rows` distinct colours.
-        let smallFormat = UIGraphicsImageRendererFormat.default()
+        let smallFormat = UIGraphicsImageRendererFormat.preferred()
         smallFormat.scale = 1
         smallFormat.opaque = true
         let small = UIGraphicsImageRenderer(size: CGSize(width: columns, height: rows), format: smallFormat)

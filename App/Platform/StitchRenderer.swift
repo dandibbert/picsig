@@ -19,7 +19,7 @@ enum StitchRenderer {
         let canvasSize = plan.canvasSize.scaled(by: scale)
         guard !canvasSize.isEmpty else { return nil }
 
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = background.alpha >= 1
         let renderer = UIGraphicsImageRenderer(size: canvasSize.cgSize, format: format)
@@ -53,7 +53,7 @@ enum StitchRenderer {
         let canvasSize = PixelSize(width: plan.canvasSize.width + margin * 2,
                                    height: plan.canvasSize.height + margin * 2)
 
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = style.backgroundColor.alpha >= 1
         let renderer = UIGraphicsImageRenderer(size: canvasSize.cgSize, format: format)
@@ -103,7 +103,7 @@ extension UIImage {
         guard longest > CGFloat(longestEdge), longest > 0 else { return self }
         let scale = CGFloat(longestEdge) / longest
         let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = false
         return UIGraphicsImageRenderer(size: target, format: format).image { _ in
@@ -115,7 +115,7 @@ extension UIImage {
         guard !size.isEmpty, size != PixelSize(width: Int(self.size.width), height: Int(self.size.height)) else {
             return self
         }
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = false
         return UIGraphicsImageRenderer(size: size.cgSize, format: format).image { _ in

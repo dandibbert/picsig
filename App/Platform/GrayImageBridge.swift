@@ -49,7 +49,7 @@ extension UIImage {
     /// stitch sideways.
     func normalizedCGImage() -> CGImage? {
         if imageOrientation == .up, let cgImage { return cgImage }
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)

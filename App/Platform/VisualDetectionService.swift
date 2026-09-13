@@ -9,18 +9,20 @@ struct VisualDetectionService {
     struct Options: Sendable {
         var detectsFaces: Bool
         var detectsBarcodes: Bool
-        /// Faces are detected on a downscaled copy: Vision does not need the full
-        /// resolution and a 20000 pixel tall image would be slow.
-        var maxAnalysisEdge: Int
+        /// Tallest slice handed to Vision in one pass. Detection runs at full
+        /// resolution on purpose — downscaling a long screenshot is what makes a
+        /// small avatar or QR code fall below Vision's detection threshold — so the
+        /// image is split instead, bounding the cost of any single pass.
+        var maxAnalysisTileHeight: Int
         var minimumFaceConfidence: Float
 
         init(detectsFaces: Bool = true,
              detectsBarcodes: Bool = true,
-             maxAnalysisEdge: Int = 4000,
+             maxAnalysisTileHeight: Int = 4000,
              minimumFaceConfidence: Float = 0.4) {
             self.detectsFaces = detectsFaces
             self.detectsBarcodes = detectsBarcodes
-            self.maxAnalysisEdge = maxAnalysisEdge
+            self.maxAnalysisTileHeight = maxAnalysisTileHeight
             self.minimumFaceConfidence = minimumFaceConfidence
         }
 
@@ -82,20 +84,22 @@ struct VisualDetectionService {
         return deduplicate(matches)
     }
 
-    /// Barcodes and faces are searched tile by tile as well, otherwise a small QR
-    /// code in a very long screenshot is below Vision's detection threshold.
+    /// Barcodes and faces are searched tile by tile, like the text pass: a small QR
+    /// code in a very long screenshot is below Vision's detection threshold once the
+    /// whole image is scaled to fit. Tiles overlap so a face on a tile boundary is
+    /// still whole in one of them.
     private func analysisTiles(for size: PixelSize) -> [PixelRect] {
-        guard size.height > options.maxAnalysisEdge else {
+        guard size.height > options.maxAnalysisTileHeight else {
             return [PixelRect(x: 0, y: 0, width: size.width, height: size.height)]
         }
         var result = [PixelRect]()
         var top = 0
         let overlap = 200
         while top < size.height {
-            let height = min(options.maxAnalysisEdge, size.height - top)
+            let height = min(options.maxAnalysisTileHeight, size.height - top)
             result.append(PixelRect(x: 0, y: top, width: size.width, height: height))
             if top + height >= size.height { break }
-            top += max(1, options.maxAnalysisEdge - overlap)
+            top += max(1, options.maxAnalysisTileHeight - overlap)
         }
         return result
     }

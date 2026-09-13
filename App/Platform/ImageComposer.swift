@@ -50,7 +50,7 @@ enum ImageComposer {
         let swapped = turns % 2 == 1
         let size = swapped ? CGSize(width: image.size.height, height: image.size.width) : image.size
 
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = false
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
@@ -102,7 +102,7 @@ enum ImageComposer {
 
     static func decorated(_ image: UIImage, state: EditState) -> UIImage {
         let size = image.size
-        let format = UIGraphicsImageRendererFormat.default()
+        let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = true
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
