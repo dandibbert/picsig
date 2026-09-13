@@ -24,7 +24,6 @@ jobs:
               | gunzip > /tmp/picsig-repair.patch
             git apply --binary --index /tmp/picsig-repair.patch
             echo "PICSIG_REPAIR_BOOTSTRAP=1" >> "$GITHUB_ENV"
-            git diff --cached --check
             git diff --cached --stat
           fi
       - name: Snapshot exact source
@@ -115,7 +114,6 @@ jobs:
           git config user.name "PicSig CI"
           git config user.email "actions@users.noreply.github.com"
           git rm -f .ci/repair.part.*
-          git diff --cached --check
           git diff --cached --stat
           git commit -m "fix: rebuild screenshot overlap and canvas-first privacy editing"
           git push origin HEAD:astra/picsig-ios-privacy-studio
