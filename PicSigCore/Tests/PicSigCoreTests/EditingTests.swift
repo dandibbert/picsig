@@ -86,6 +86,20 @@ final class EditDocumentTests: XCTestCase {
         XCTAssertEqual(document.state.annotations.map(\.tool), [.rectangle])
     }
 
+    func testUpdatingAnnotationIsOneUndoStep() {
+        var document = EditDocument()
+        let mark = Annotation(tool: .text, points: [NormalizedPoint(x: 0.2, y: 0.2)], text: "hi")
+        document.add(mark)
+        XCTAssertTrue(document.updateAnnotation(id: mark.id) { $0.text = "hello"; $0.fontName = "Courier"; $0.lineWidth = 0.02 })
+        XCTAssertEqual(document.state.annotations.first?.text, "hello")
+        XCTAssertEqual(document.state.annotations.first?.fontName, "Courier")
+        XCTAssertFalse(document.updateAnnotation(id: UUID()) { $0.text = "x" }, "unknown ids are rejected")
+        XCTAssertFalse(document.updateAnnotation(id: mark.id) { _ in }, "a no-op does not fill the stack")
+        document.undo()
+        XCTAssertEqual(document.state.annotations.first?.text, "hi")
+        XCTAssertNil(document.state.annotations.first?.fontName)
+    }
+
     func testStateCodingRoundTrip() throws {
         var state = EditState()
         state.annotations = [stroke(0.2)]

@@ -112,6 +112,17 @@ public struct EditDocument: Equatable, Sendable {
         apply { $0.annotations.removeAll { $0.id == id } }
     }
 
+    /// Edits one existing mark in place — its colour, width, text, font — as a
+    /// single undo step. Returns false when the id is unknown or nothing changed.
+    @discardableResult
+    public mutating func updateAnnotation(id: UUID, _ mutate: (inout Annotation) -> Void) -> Bool {
+        guard state.annotations.contains(where: { $0.id == id }) else { return false }
+        return apply { state in
+            guard let index = state.annotations.firstIndex(where: { $0.id == id }) else { return }
+            mutate(&state.annotations[index])
+        }
+    }
+
     public mutating func clearAnnotations() {
         apply { $0.annotations.removeAll() }
     }

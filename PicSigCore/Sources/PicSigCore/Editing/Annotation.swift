@@ -1,7 +1,7 @@
 import Foundation
 
 /// Point in unit image space, top-left origin.
-public struct NormalizedPoint: Equatable, Codable, Sendable {
+public struct NormalizedPoint: Hashable, Codable, Sendable {
     public var x: Double
     public var y: Double
 
@@ -94,6 +94,11 @@ public struct Annotation: Identifiable, Equatable, Codable, Sendable {
     public var text: String
     /// Font size as a fraction of the image width.
     public var fontSize: Double
+    /// PostScript name of the font for `.text`; `nil` is the system font. Any
+    /// font the device knows — including ones installed through a configuration
+    /// profile — can be named here; the renderer falls back to the system font
+    /// when a document travels to a device that lacks it.
+    public var fontName: String?
     public var number: Int?
 
     public init(id: UUID = UUID(),
@@ -104,6 +109,7 @@ public struct Annotation: Identifiable, Equatable, Codable, Sendable {
                 isFilled: Bool = false,
                 text: String = "",
                 fontSize: Double = 0.035,
+                fontName: String? = nil,
                 number: Int? = nil) {
         self.id = id
         self.tool = tool
@@ -113,6 +119,7 @@ public struct Annotation: Identifiable, Equatable, Codable, Sendable {
         self.isFilled = isFilled
         self.text = text
         self.fontSize = fontSize
+        self.fontName = fontName
         self.number = number
     }
 

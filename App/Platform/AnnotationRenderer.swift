@@ -93,7 +93,7 @@ enum AnnotationRenderer {
             guard !annotation.text.isEmpty else { break }
             let fontSize = max(8, CGFloat(annotation.fontSize) * size.width)
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .font: AnnotationFonts.font(named: annotation.fontName, size: fontSize),
                 .foregroundColor: color
             ]
             let text = annotation.text as NSString
