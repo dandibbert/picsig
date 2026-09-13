@@ -79,10 +79,9 @@ enum RedactionRenderer {
         }
 
         // Each block is filled with the plain average of the pixels it replaces,
-        // computed here rather than by drawing a shrunken copy back at size: the
-        // scaled draw came out black on the simulator, so the result contains
-        // exactly `columns * rows` colours and nothing depends on how Core Graphics
-        // chooses to resample.
+        // computed here rather than by drawing a shrunken copy back at size, so the
+        // result contains exactly `columns * rows` colours and nothing depends on
+        // how Core Graphics chooses to resample.
         let width = Int(rect.width)
         let height = Int(rect.height)
         let columns = max(1, width / block)
@@ -122,11 +121,8 @@ enum RedactionRenderer {
     }
 
     /// The pixels inside `rect` as tightly packed 8 bit RGBA rows, top row first.
-    ///
-    /// The whole image is drawn, shifted so `rect` lands on the context, rather
-    /// than a `cropping(to:)` sub-image: on the simulator a cropped copy of an
-    /// extended range bitmap rendered black into an 8 bit context.
-    static func rgbaPixels(of image: CGImage, in rect: CGRect) -> [UInt8]? {
+    /// Works for any source format — the synthetic screenshots are 8 bit grey.
+    private static func rgbaPixels(of image: CGImage, in rect: CGRect) -> [UInt8]? {
         let width = Int(rect.width)
         let height = Int(rect.height)
         guard width > 0, height > 0 else { return nil }
@@ -177,7 +173,12 @@ enum RedactionRenderer {
                 let alpha = 0.04 + nextUnit() * 0.08
                 let white = nextUnit() > 0.5
                 (white ? UIColor.white : UIColor.black).withAlphaComponent(CGFloat(alpha)).setFill()
-                context.fill(CGRect(x: x, y: y, width: step, height: step).intersection(rect))
+                // `fill(_:)` alone paints with the copy blend mode, which does not
+                // tint the block but *replaces* it with a nearly transparent colour
+                // — stored premultiplied in an opaque bitmap, that is black. Every
+                // mosaic used to come out as a black block because of this.
+                context.fill(CGRect(x: x, y: y, width: step, height: step).intersection(rect),
+                             blendMode: .normal)
                 x += step
             }
             y += step
