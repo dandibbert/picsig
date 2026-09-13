@@ -271,13 +271,8 @@ final class WorkbenchViewModel {
     /// 20000 pixel image that often would be felt.
     var canvasSpaceSize: PixelSize {
         guard let stitched else { return .zero }
-        let crop = document.state.crop
-        let full = PixelSize(width: Int(stitched.size.width), height: Int(stitched.size.height))
-        let cropped = PixelSize(width: max(1, Int((Double(full.width) * crop.width).rounded())),
-                                height: max(1, Int((Double(full.height) * crop.height).rounded())))
-        return document.state.quarterTurns % 2 == 0
-            ? cropped
-            : PixelSize(width: cropped.height, height: cropped.width)
+        return document.state.canvasSize(for: PixelSize(width: Int(stitched.size.width),
+                                                        height: Int(stitched.size.height)))
     }
 
     /// The image in *canvas space*: cropped, rotated and mirrored, but not yet
@@ -560,35 +555,13 @@ final class WorkbenchViewModel {
         scheduleRecompose()
     }
 
-    /// Crop is stored in the coordinates of the untouched stitched image, but the
-    /// user draws on the canvas, which may already be cropped, rotated and
-    /// mirrored. Undo those steps before storing the new rectangle, or a second
-    /// crop lands somewhere else entirely.
+    /// The crop is stored in base space while the user draws in canvas space, so
+    /// the drawn rectangle has to travel back through the rotation, the mirroring
+    /// and any earlier crop first.
     func applyCrop(_ rect: NormalizedRect) {
-        let corner = baseSpacePoint(x: rect.minX, y: rect.minY)
-        let opposite = baseSpacePoint(x: rect.maxX, y: rect.maxY)
-        document.setCrop(NormalizedRect(x: min(corner.x, opposite.x),
-                                        y: min(corner.y, opposite.y),
-                                        width: abs(opposite.x - corner.x),
-                                        height: abs(opposite.y - corner.y)))
+        document.setCrop(document.state.baseSpaceRect(rect))
         invalidateScan()
         scheduleRecompose()
-    }
-
-    private func baseSpacePoint(x: Double, y: Double) -> (x: Double, y: Double) {
-        var px = x
-        var py = y
-        // Turns are clockwise, so undoing one turn rotates counter-clockwise.
-        switch ((document.state.quarterTurns % 4) + 4) % 4 {
-        case 1: (px, py) = (y, 1 - x)
-        case 2: (px, py) = (1 - x, 1 - y)
-        case 3: (px, py) = (1 - y, x)
-        default: break
-        }
-        // The renderer mirrors before it rotates, so unmirroring comes last.
-        if document.state.isMirrored { px = 1 - px }
-        let crop = document.state.crop
-        return (crop.x + px * crop.width, crop.y + py * crop.height)
     }
 
     func resetCrop() {

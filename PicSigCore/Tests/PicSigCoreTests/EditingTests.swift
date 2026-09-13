@@ -98,6 +98,97 @@ final class EditDocumentTests: XCTestCase {
     }
 }
 
+/// The canvas → base space conversion is what keeps a second crop from jumping,
+/// so every combination of crop, rotation and mirroring is pinned down here.
+final class CanvasSpaceTests: XCTestCase {
+    private func assertRect(_ rect: NormalizedRect,
+                            _ expected: NormalizedRect,
+                            file: StaticString = #filePath,
+                            line: UInt = #line) {
+        XCTAssertEqual(rect.x, expected.x, accuracy: 0.0001, file: file, line: line)
+        XCTAssertEqual(rect.y, expected.y, accuracy: 0.0001, file: file, line: line)
+        XCTAssertEqual(rect.width, expected.width, accuracy: 0.0001, file: file, line: line)
+        XCTAssertEqual(rect.height, expected.height, accuracy: 0.0001, file: file, line: line)
+    }
+
+    func testUntouchedStateIsIdentity() {
+        let rect = NormalizedRect(x: 0.2, y: 0.3, width: 0.4, height: 0.1)
+        assertRect(EditState().baseSpaceRect(rect), rect)
+    }
+
+    func testSecondCropIsRelativeToTheFirst() {
+        var state = EditState()
+        state.crop = NormalizedRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+
+        // Selecting the whole canvas must reproduce the existing crop …
+        assertRect(state.baseSpaceRect(.full), state.crop)
+        // … and selecting its top-left quarter must land inside it.
+        assertRect(state.baseSpaceRect(NormalizedRect(x: 0, y: 0, width: 0.5, height: 0.5)),
+                   NormalizedRect(x: 0.25, y: 0.25, width: 0.25, height: 0.25))
+    }
+
+    func testClockwiseTurnMovesTopLeftOfCanvasToBottomLeftOfSource() {
+        var state = EditState()
+        state.quarterTurns = 1
+        // A wide strip at the top of the rotated view is a tall strip up the left
+        // hand side of the original.
+        assertRect(state.baseSpaceRect(NormalizedRect(x: 0, y: 0, width: 0.2, height: 0.1)),
+                   NormalizedRect(x: 0, y: 0.8, width: 0.1, height: 0.2))
+    }
+
+    func testAllTurnsMapTheCanvasOntoTheWholeSource() {
+        for turns in 0..<4 {
+            var state = EditState()
+            state.quarterTurns = turns
+            assertRect(state.baseSpaceRect(.full), .full)
+        }
+    }
+
+    func testMirroringFlipsHorizontally() {
+        var state = EditState()
+        state.isMirrored = true
+        assertRect(state.baseSpaceRect(NormalizedRect(x: 0, y: 0.4, width: 0.2, height: 0.2)),
+                   NormalizedRect(x: 0.8, y: 0.4, width: 0.2, height: 0.2))
+    }
+
+    func testMirroringIsUndoneAfterRotation() {
+        var state = EditState()
+        state.quarterTurns = 1
+        state.isMirrored = true
+        // Undo the turn first: (0,0)-(0.2,0.1) becomes x 0…0.1, y 0.8…1.
+        // Then unmirror, which moves it to the right hand side.
+        assertRect(state.baseSpaceRect(NormalizedRect(x: 0, y: 0, width: 0.2, height: 0.1)),
+                   NormalizedRect(x: 0.9, y: 0.8, width: 0.1, height: 0.2))
+    }
+
+    func testCropAndRotationCombine() {
+        var state = EditState()
+        state.crop = NormalizedRect(x: 0, y: 0.5, width: 1, height: 0.5)
+        state.quarterTurns = 2
+        assertRect(state.baseSpaceRect(NormalizedRect(x: 0, y: 0, width: 0.5, height: 0.5)),
+                   NormalizedRect(x: 0.5, y: 0.75, width: 0.5, height: 0.25))
+    }
+
+    func testCanvasSizeFollowsCropAndRotation() {
+        var state = EditState()
+        let source = PixelSize(width: 1200, height: 8000)
+        XCTAssertEqual(state.canvasSize(for: source), source)
+
+        state.crop = NormalizedRect(x: 0, y: 0, width: 0.5, height: 0.25)
+        XCTAssertEqual(state.canvasSize(for: source), PixelSize(width: 600, height: 2000))
+
+        state.quarterTurns = 1
+        XCTAssertEqual(state.canvasSize(for: source), PixelSize(width: 2000, height: 600))
+
+        state.quarterTurns = 2
+        XCTAssertEqual(state.canvasSize(for: source), PixelSize(width: 600, height: 2000))
+    }
+
+    func testCanvasSizeOfEmptySourceIsEmpty() {
+        XCTAssertEqual(EditState().canvasSize(for: .zero), .zero)
+    }
+}
+
 final class AnnotationTests: XCTestCase {
     func testBoundingBox() {
         let annotation = Annotation(tool: .pen, points: [

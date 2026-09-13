@@ -125,7 +125,7 @@ xcodebuild -project PicSig.xcodeproj -scheme PicSig \
 cd PicSigCore && swift test
 ```
 
-117 个用例，覆盖重叠检测、固定区域识别、滚动 / 录屏 / 手动排版规划、
+126 个用例，覆盖重叠检测、固定区域识别、滚动 / 录屏 / 手动排版规划、
 校验位、上下文判定、规则冲突、遮盖规划与合并、脱敏生成、覆盖率与回读审计、
 撤销栈与分页切割。测试用的截图由 `SyntheticImage` 确定性生成，不依赖素材文件。
 
