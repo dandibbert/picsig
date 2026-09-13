@@ -21,9 +21,20 @@ final class PicSigUITests: XCTestCase {
         XCTAssertTrue(export.waitForExistence(timeout: 90))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: export)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
+        XCTAssertTrue(editor.buttons["text-redaction"].exists)
         attachment("02-PrivacyEditor", app: editor)
+
+        editor.buttons["text-redaction"].tap()
+        let textList = editor.descendants(matching: .any)["recognized-text-list"]
+        XCTAssertTrue(textList.waitForExistence(timeout: 120))
+        let firstText = editor.buttons["recognized-text-row"].firstMatch
+        XCTAssertTrue(firstText.waitForExistence(timeout: 10))
+        firstText.tap()
+        attachment("03-TextRedaction", app: editor)
+        editor.navigationBars["文字打码"].buttons["完成"].tap()
+
         editor.buttons["review-masks"].tap()
-        attachment("03-PrivacyReview", app: editor)
+        attachment("04-PrivacyReview", app: editor)
     }
 
     @MainActor private func attachment(_ name: String, app: XCUIApplication) {
