@@ -21,6 +21,9 @@ final class PicSigUITests: XCTestCase {
         XCTAssertTrue(export.waitForExistence(timeout: 90))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: export)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
+
+        let canvas = editor.descendants(matching: .any)["editor-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 120), "Editor must render its real canvas after automatic privacy scanning")
         XCTAssertTrue(editor.buttons["text-redaction"].exists)
         attachment("02-PrivacyEditor", app: editor)
 
