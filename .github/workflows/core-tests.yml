@@ -1,0 +1,19 @@
+name: Core tests
+
+# The algorithms live in PicSigCore, which does not import UIKit or Vision, so
+# they can be tested on Linux without a macOS runner. The iOS layer still needs
+# Xcode and is not built here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test
+        working-directory: PicSigCore
+        run: swift test
