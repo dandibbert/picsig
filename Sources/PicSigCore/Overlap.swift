@@ -25,6 +25,7 @@ public struct OverlapMatch: Sendable {
 
 public enum OverlapDetector {
     private struct Score { var rows: Int; var error: Double; var texture: Double }
+
     public static func difference(_ a: GrayRaster, _ b: GrayRaster) -> Double {
         guard a.width == b.width, a.height == b.height else { return 255 }
         var sum = 0.0, count = 0
@@ -33,6 +34,7 @@ public enum OverlapDetector {
         }
         return sum / Double(max(1, count))
     }
+
     /// Refuses low-texture and ambiguous matches instead of silently deleting content.
     public static func match(_ a: GrayRaster, _ b: GrayRaster) -> OverlapMatch? {
         guard a.width == b.width else { return nil }
@@ -45,7 +47,9 @@ public enum OverlapDetector {
         for rows in stride(from: minimum, through: maximum, by: step) { coarse.append(score(a, b, rows: rows, samples: 12)) }
         let seeds = coarse.sorted { $0.error < $1.error }.prefix(8)
         var candidates = Set<Int>()
-        for seed in seeds { for row in max(minimum, seed.rows - step)...min(maximum, seed.rows + step) { candidates.insert(row) } }
+        for seed in seeds {
+            for row in max(minimum, seed.rows - step)...min(maximum, seed.rows + step) { candidates.insert(row) }
+        }
         let refined = candidates.map { score(a, b, rows: $0, samples: 112) }.sorted { $0.error < $1.error }
         guard let best = refined.first, best.error < 14, best.texture > 2.5 else { return nil }
         let separation = max(5, maximum / 300)
@@ -55,6 +59,7 @@ public enum OverlapDetector {
         guard certainty >= 0.40 else { return nil }
         return OverlapMatch(rows: best.rows, confidence: certainty, duplicate: false)
     }
+
     private static func score(_ a: GrayRaster, _ b: GrayRaster, rows: Int, samples: Int) -> Score {
         let inset = max(2, a.width / 12)
         let xStep = max(1, (a.width - 2 * inset) / (samples <= 12 ? 12 : 28))
@@ -74,21 +79,46 @@ public enum OverlapDetector {
         }
         return Score(rows: rows, error: weighted / max(1, weightSum), texture: texture / Double(max(1, count)))
     }
-    /// Only constant outer runs are removed; the first header and last footer are retained by the caller.
+
+    /// Detects UI chrome that stays pinned to the outer edge while the page content moves.
+    /// A trimmed row metric deliberately ignores a minority of changing pixels (clock text,
+    /// loading indicators, translucent chrome) instead of requiring every pixel to be identical.
     public static func fixedInsets(_ a: GrayRaster, _ b: GrayRaster) -> (top: Int, bottom: Int) {
         guard a.width == b.width, difference(a, b) > 3 else { return (0, 0) }
-        let limit = min(a.height, b.height) * 16 / 100
+        let limit = min(a.height, b.height) * 18 / 100
+        let xInset = max(1, a.width / 24)
+
+        func rowIsStable(_ ay: Int, _ by: Int) -> Bool {
+            var diffs: [Int] = []
+            diffs.reserveCapacity(max(1, a.width - xInset * 2))
+            for x in xInset..<(a.width - xInset) {
+                diffs.append(abs(Int(a.pixels[ay * a.width + x]) - Int(b.pixels[by * b.width + x])))
+            }
+            guard !diffs.isEmpty else { return false }
+            diffs.sort()
+            let kept = max(4, diffs.count * 3 / 4)
+            let trimmedMean = Double(diffs.prefix(kept).reduce(0, +)) / Double(kept)
+            let q75 = diffs[min(diffs.count - 1, kept - 1)]
+            return trimmedMean < 5.0 && q75 < 15
+        }
+
         func count(fromBottom: Bool) -> Int {
-            var lastStable = 0, mismatches = 0
+            var lastStable = 0
+            var mismatches = 0
             for i in 0..<limit {
-                let ay = fromBottom ? a.height - 1 - i : i, by = fromBottom ? b.height - 1 - i : i
-                var total = 0
-                for x in 0..<a.width { total += abs(Int(a.pixels[ay * a.width + x]) - Int(b.pixels[by * b.width + x])) }
-                if Double(total) / Double(a.width) < 2.8 { lastStable = i + 1; mismatches = 0 }
-                else { mismatches += 1; if mismatches >= 3 { break } }
+                let ay = fromBottom ? a.height - 1 - i : i
+                let by = fromBottom ? b.height - 1 - i : i
+                if rowIsStable(ay, by) {
+                    lastStable = i + 1
+                    mismatches = 0
+                } else {
+                    mismatches += 1
+                    if mismatches >= 4 { break }
+                }
             }
             return lastStable >= 8 ? lastStable : 0
         }
+
         return (count(fromBottom: false), count(fromBottom: true))
     }
 }

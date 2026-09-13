@@ -92,8 +92,6 @@ final class ImagingTests: XCTestCase {
             let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [CFString: Any])
             XCTAssertNil(properties[kCGImagePropertyGPSDictionary])
             XCTAssertNil(properties[kCGImagePropertyIPTCDictionary])
-            // ImageIO may synthesize an EXIF dictionary containing only output pixel dimensions.
-            // Reject source-derived fields instead of treating those structural dimensions as leakage.
             let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
             XCTAssertNil(exif?[kCGImagePropertyExifDateTimeOriginal])
             XCTAssertNil(exif?[kCGImagePropertyExifDateTimeDigitized])
@@ -138,8 +136,19 @@ final class ImagingTests: XCTestCase {
         XCTAssertTrue(report.masks.contains { $0.kind == .email })
         XCTAssertTrue(report.masks.contains { $0.kind == .keyword })
         XCTAssertTrue(report.masks.allSatisfy { $0.rect.isValid && $0.rect.intersection(.unit) == $0.rect })
-        // The document contains random association IDs, never recognized strings.
         p.edit.masks = report.masks
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self).contains("alice"))
+    }
+    func testResidentialAddressHeuristics() {
+        for value in [
+            "上海市浦东新区张江镇祖冲之路1234弄5号楼2单元201室",
+            "1234 Market Street Apt 5B, San Francisco, CA 94103",
+            "東京都新宿区西新宿2丁目8番1号",
+            "家庭住址：杭州市西湖区文三路88号"
+        ] {
+            XCTAssertTrue(PrivacyScanner.looksLikeResidentialAddress(value), value)
+        }
+        XCTAssertFalse(PrivacyScanner.looksLikeResidentialAddress("今天走这条道路很开心"))
+        XCTAssertFalse(PrivacyScanner.looksLikeResidentialAddress("产品型号 A1234，版本 2.0"))
     }
 }

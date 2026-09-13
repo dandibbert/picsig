@@ -163,4 +163,18 @@ final class CoreTests: XCTestCase {
         let insets = OverlapDetector.fixedInsets(a, b)
         XCTAssertEqual(insets.top, 20); XCTAssertEqual(insets.bottom, 15)
     }
+    func testFixedBarsIgnoreSmallDynamicStatusText() throws {
+        let bodyA = try raster(y: 0, height: 200), bodyB = try raster(y: 120, height: 200)
+        let topA = [UInt8](repeating: 245, count: 48 * 20)
+        var topB = topA
+        for row in 0..<20 {
+            for x in 3..<8 { topB[row * 48 + x] = UInt8((row * 17 + x * 31) % 220) }
+        }
+        let bottom = [UInt8](repeating: 200, count: 48 * 15)
+        let a = try GrayRaster(width: 48, height: 235, pixels: topA + bodyA.pixels + bottom)
+        let b = try GrayRaster(width: 48, height: 235, pixels: topB + bodyB.pixels + bottom)
+        let insets = OverlapDetector.fixedInsets(a, b)
+        XCTAssertEqual(insets.top, 20)
+        XCTAssertEqual(insets.bottom, 15)
+    }
 }

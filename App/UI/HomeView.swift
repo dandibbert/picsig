@@ -1,116 +1,268 @@
+import Foundation
 import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var library: LibraryModel
     @State private var settings = false
-    @State private var pendingDeletion: Project?
+    @State private var pickerPresented = false
+    @State private var pickerLoading = false
+    @State private var pendingKind: ProjectKind = .scroll
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    HStack {
-                        HStack(spacing: 9) {
-                            Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.picAccent)
-                            Text("PicSig").font(.system(size: 25, weight: .bold, design: .rounded))
-                        }
-                        Spacer()
-                        Button { settings = true } label: { Image(systemName: "slider.horizontal.3").font(.title3).frame(width: 44, height: 44).background(.background, in: Circle()) }
-                            .accessibilityLabel("隐私规则与设置")
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("长截图").font(.system(size: 34, weight: .bold, design: .rounded))
+                        Text("选截图，自动拼。失败的拼接点再手动调。")
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
-                    hero
-                    VStack(alignment: .leading, spacing: 13) {
-                        Text("从一个片段开始").font(.headline)
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 13) {
-                            startCard(.scroll, subtitle: "识别重叠 · 接得自然", color: .picAccent)
-                            startCard(.video, subtitle: "滚动录屏 · 变成长图", color: .picMint)
-                            startCard(.vertical, subtitle: "照片上下排列", color: .orange)
-                            startCard(.horizontal, subtitle: "并排展示 · 自由留白", color: .blue)
+
+                    Button { pick(.scroll) } label: {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 18).fill(Color.picAccent.opacity(0.13))
+                                Image(systemName: "rectangle.stack.badge.plus").font(.system(size: 31, weight: .semibold)).foregroundStyle(Color.picAccent)
+                            }.frame(width: 64, height: 64)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("选择截图并自动拼接").font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                                Text("自动识别重叠，并清理重复的状态栏 / 地址栏 / 工具栏")
+                                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                        }
+                        .padding(18)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 24))
+                        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.picAccent.opacity(0.14)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("quick-scroll")
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("其他方式").font(.headline)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            quickCard(title: "录屏转长图", subtitle: "导入系统录屏", symbol: "record.circle", color: .red) {
+                                library.create(.video)
+                            }
+                            quickCard(title: "竖向拼图", subtitle: "照片上下排列", symbol: "rectangle.split.1x2", color: .orange) {
+                                pick(.vertical)
+                            }
+                            quickCard(title: "横向拼图", subtitle: "并排比较", symbol: "rectangle.split.2x1", color: .blue) {
+                                pick(.horizontal)
+                            }
+                            quickCard(title: "隐私规则", subtitle: "地址也默认识别", symbol: "checkmark.shield", color: .picMint) {
+                                settings = true
+                            }
                         }
                     }
-                    HStack(spacing: 13) {
-                        Image(systemName: "checkmark.shield.fill").font(.title2).foregroundStyle(Color.picMint)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("先拼完整，再放心分享").font(.subheadline.weight(.semibold))
-                            Text("本机识别敏感信息，支持逐项复核与同内容批量遮挡。").font(.caption).foregroundStyle(.secondary)
+
+                    if let recent = library.projects.first {
+                        Button { library.open(recent) } label: {
+                            HStack(spacing: 13) {
+                                Image(systemName: "clock.arrow.circlepath").font(.title3).foregroundStyle(Color.picAccent)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("继续上次编辑").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                    Text("\(recent.updatedAt.formatted(.relative(presentation: .named))) · 自动保存")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }.padding(15).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
                         }
-                    }.cardSurface()
-                    projectSection
-                    Button { Task { await library.openDemo() } } label: {
-                        Label("用示例体验一次", systemImage: "sparkles").font(.subheadline.weight(.medium)).frame(maxWidth: .infinity).padding(16)
-                    }.background(Color.picAccent.opacity(0.07), in: RoundedRectangle(cornerRadius: 18)).accessibilityIdentifier("open-demo")
-                    Text("ASTRA EDITION · 本机处理 · 无需账号").font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(1.3).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
-                }.padding(22).frame(maxWidth: 860).frame(maxWidth: .infinity)
-            }.background(Color.picCanvas).toolbar(.hidden, for: .navigationBar)
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("resume-recent")
+                    }
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "lock.shield").foregroundStyle(Color.picMint)
+                        Text("拼接、OCR 和隐私识别都在本机完成。自动打码仍需在导出前复核。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(20)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Color.picCanvas)
+            .toolbar(.hidden, for: .navigationBar)
         }
-        .fullScreenCover(item: $library.active, onDismiss: { Task { await library.reload() } }) { session in StudioView(session: session) }
+        .fullScreenCover(item: $library.active, onDismiss: { Task { await library.reload() } }) { session in
+            StudioView(session: session)
+        }
+        .sheet(isPresented: $pickerPresented) {
+            MediaPicker(video: false, limit: 60, started: { pickerLoading = true }) { result in
+                pickerLoading = false
+                let kind = pendingKind
+                pickerPresented = false
+                switch result {
+                case .success(let urls):
+                    guard !urls.isEmpty else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        library.beginQuick(urls, kind: kind)
+                    }
+                case .failure(let error):
+                    library.notice = Notice(title: "导入失败", message: error.localizedDescription)
+                }
+            }
+        }
         .sheet(isPresented: $settings) {
             NavigationStack {
                 PrivacySettingsView(options: $library.defaults, defaults: true)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { Task { await library.saveDefaults(); settings = false } } } }
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { Task { await library.saveDefaults(); settings = false } }
+                        }
+                    }
             }
         }
-        .confirmationDialog("删除这个项目？", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
-            Button("删除项目及其本机素材", role: .destructive) { if let project = pendingDeletion { Task { await library.delete(project) } }; pendingDeletion = nil }
-        } message: { Text("不会删除相册中的原始照片，也不会删除已经分享出去的图片。") }
+        .overlay {
+            if pickerLoading {
+                ProgressView("正在读取所选图片…")
+                    .padding(.horizontal, 24).padding(.vertical, 20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+            }
+        }
         .notice($library.notice)
     }
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("把内容连起来。\n把隐私藏起来。").font(.system(size: 34, weight: .bold, design: .rounded)).tracking(-1).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Circle().fill(Color.picMint).frame(width: 6, height: 6)
-                Text("长截图 / 自由拼图 / 隐私编辑").font(.caption).foregroundStyle(.secondary)
+
+    private var header: some View {
+        HStack {
+            HStack(spacing: 9) {
+                Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.picAccent)
+                Text("PicSig").font(.system(size: 23, weight: .bold, design: .rounded))
             }
-        }.padding(.vertical, 12)
-    }
-    private func startCard(_ kind: ProjectKind, subtitle: String, color: Color) -> some View {
-        Button { library.create(kind) } label: {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Image(systemName: kind.symbol).font(.system(size: 25, weight: .medium)).foregroundStyle(color)
-                        .frame(width: 49, height: 49).background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.tertiary)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(kind.title).font(.headline).foregroundStyle(.primary)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }.frame(maxWidth: .infinity, minHeight: 120, alignment: .leading).cardSurface()
-        }.buttonStyle(.plain).accessibilityIdentifier("create-\(kind.rawValue)")
-    }
-    private var projectSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack { Text("本机项目").font(.headline); Spacer(); Text("\(library.projects.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-            if library.unreadableCount > 0 {
-                Label("\(library.unreadableCount) 个项目暂时无法读取，原文件已保留。", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            Spacer()
+            Button { settings = true } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.title3).frame(width: 44, height: 44)
+                    .background(.background, in: Circle())
             }
-            if library.projects.isEmpty {
-                HStack(spacing: 16) {
-                    Image(systemName: "rectangle.stack.badge.plus").font(.system(size: 30)).foregroundStyle(.tertiary)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("第一张长图，从这里开始").font(.subheadline.weight(.medium))
-                        Text("编辑自动保存，稍后也能继续。项目封面不展示原图，避免隐私外露。").font(.caption).foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).cardSurface()
-            } else {
-                ForEach(library.projects) { project in
-                    Button { library.open(project) } label: {
-                        HStack(spacing: 14) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 14).fill(Color.picAccent.opacity(0.09)).frame(width: 56, height: 65)
-                                Image(systemName: project.kind.symbol).font(.title2).foregroundStyle(Color.picAccent)
-                            }
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(project.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                                Text("\(project.images.count) 张素材 · \(project.updatedAt.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
-                                if !project.edit.masks.isEmpty { Label("\(project.edit.masks.filter(\.enabled).count) 处遮挡", systemImage: "shield.lefthalf.filled").font(.caption2).foregroundStyle(Color.picMint) }
-                            }
-                            Spacer(minLength: 0); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                        }.cardSurface()
-                    }.buttonStyle(.plain).contextMenu { Button("删除项目", systemImage: "trash", role: .destructive) { pendingDeletion = project } }
+            .accessibilityLabel("设置")
+        }
+    }
+
+    private func quickCard(title: String, subtitle: String, symbol: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 13) {
+                Image(systemName: symbol).font(.system(size: 23, weight: .medium)).foregroundStyle(color)
+                    .frame(width: 45, height: 45).background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
+            .padding(15)
+            .background(.background, in: RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(title == "录屏转长图" ? "create-video" : title == "竖向拼图" ? "quick-vertical" : title == "横向拼图" ? "quick-horizontal" : "privacy-settings")
+    }
+
+    private func pick(_ kind: ProjectKind) {
+        pendingKind = kind
+        pickerPresented = true
+    }
+}
+
+@MainActor
+extension LibraryModel {
+    func beginQuick(_ urls: [URL], kind: ProjectKind) {
+        guard !urls.isEmpty else { return }
+        var draft = Project(title: kind == .scroll ? "长截图" : kind.title, kind: kind)
+        draft.privacy = defaults
+        let session = StudioSession(project: draft)
+        active = session
+        session.quickImport(urls, finishInEditor: kind == .scroll)
+    }
+}
+
+@MainActor
+extension StudioSession {
+    func quickImport(_ urls: [URL], finishInEditor: Bool) {
+        importImages(urls)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.waitForQuickWork()
+            guard !Task.isCancelled, !self.project.images.isEmpty else { return }
+
+            if self.project.kind.isScroll, self.project.images.count > 1 {
+                self.autoStitch(trimBars: true)
+                await self.waitForQuickWork()
+                guard !Task.isCancelled else { return }
+                self.cleanDetectedOuterBars()
+            }
+
+            if finishInEditor {
+                self.enterEditor()
+            }
+        }
+    }
+
+    private func waitForQuickWork() async {
+        while busy && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(80))
+        }
+    }
+
+    /// `MediaWorker.stitch` deliberately preserves the first header and last footer for manual workflows.
+    /// Quick long-screenshot mode is different: when the same fixed strip was detected on adjacent screenshots,
+    /// remove that outer copy too so browser/status/tool bars do not survive in the final scrollshot.
+    private func cleanDetectedOuterBars() {
+        guard project.images.count >= 2 else { return }
+        let images = project.images
+        let referenceHeight = median(images.map(\.size.height))
+
+        let topCandidates = images.dropFirst().compactMap { source -> Double? in
+            guard let automatic = source.automaticCrop else { return nil }
+            let pixels = max(0, (automatic.y - source.crop.y) * source.size.height)
+            return pixels >= 8 && pixels <= referenceHeight * 0.22 ? pixels : nil
+        }
+        let bottomCandidates = images.dropLast().compactMap { source -> Double? in
+            guard let automatic = source.automaticCrop else { return nil }
+            let pixels = max(0, (source.crop.maxY - automatic.maxY) * source.size.height)
+            return pixels >= 8 && pixels <= referenceHeight * 0.22 ? pixels : nil
+        }
+        let topPixels = median(topCandidates)
+        let bottomPixels = median(bottomCandidates)
+        guard topPixels > 0 || bottomPixels > 0 else {
+            note = "已自动拼接。若某个拼接点不准，点左上角「拼接」逐处微调。"
+            return
+        }
+
+        change { project in
+            if topPixels > 0, !project.images.isEmpty {
+                var source = project.images[0]
+                let current = source.automaticCrop ?? source.crop
+                let y = max(current.y, source.crop.y + topPixels / max(1, source.size.height))
+                if current.maxY - y > 0.01 {
+                    source.automaticCrop = Box(current.x, y, current.width, current.maxY - y).intersection(.unit)
+                    project.images[0] = source
+                }
+            }
+            if bottomPixels > 0, !project.images.isEmpty {
+                let index = project.images.count - 1
+                var source = project.images[index]
+                let current = source.automaticCrop ?? source.crop
+                let maxY = min(current.maxY, source.crop.maxY - bottomPixels / max(1, source.size.height))
+                if maxY - current.y > 0.01 {
+                    source.automaticCrop = Box(current.x, current.y, current.width, maxY - current.y).intersection(.unit)
+                    project.images[index] = source
                 }
             }
         }
+        refreshPreview()
+        note = "已自动拼接，并清理检测到的固定状态栏 / 地址栏 / 工具栏。需要时可返回「拼接」微调。"
+    }
+
+    private func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) { return (sorted[middle - 1] + sorted[middle]) / 2 }
+        return sorted[middle]
     }
 }
