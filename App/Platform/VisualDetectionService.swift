@@ -30,6 +30,10 @@ struct VisualDetectionService {
     var options: Options = .default
 
     func detect(cgImage: CGImage, enabledCategories: Set<SensitiveCategory>) -> [SensitiveMatch] {
+        let wantsFaces = options.detectsFaces && enabledCategories.contains(.face)
+        let wantsBarcodes = options.detectsBarcodes && enabledCategories.contains(.barcode)
+        guard wantsFaces || wantsBarcodes else { return [] }
+
         var matches = [SensitiveMatch]()
         let tiles = analysisTiles(for: cgImage.pixelSize)
 
@@ -38,9 +42,8 @@ struct VisualDetectionService {
             var requests = [VNRequest]()
             let faceRequest = VNDetectFaceRectanglesRequest()
             let barcodeRequest = VNDetectBarcodesRequest()
-            if options.detectsFaces && enabledCategories.contains(.face) { requests.append(faceRequest) }
-            if options.detectsBarcodes && enabledCategories.contains(.barcode) { requests.append(barcodeRequest) }
-            guard !requests.isEmpty else { return [] }
+            if wantsFaces { requests.append(faceRequest) }
+            if wantsBarcodes { requests.append(barcodeRequest) }
 
             let handler = VNImageRequestHandler(cgImage: cropped, options: [:])
             do {

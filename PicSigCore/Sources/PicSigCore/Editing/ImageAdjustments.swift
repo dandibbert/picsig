@@ -95,20 +95,17 @@ public struct Watermark: Equatable, Codable, Sendable {
     public var opacity: Double
     /// Font size as a fraction of the image width.
     public var fontSize: Double
-    public var rotation: Double
 
     public init(text: String,
                 position: WatermarkPosition = .bottomTrailing,
                 color: RGBAColor = .white,
                 opacity: Double = 0.5,
-                fontSize: Double = 0.03,
-                rotation: Double = 0) {
+                fontSize: Double = 0.03) {
         self.text = text
         self.position = position
         self.color = color
         self.opacity = opacity
         self.fontSize = fontSize
-        self.rotation = rotation
     }
 
     public var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
