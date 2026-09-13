@@ -2,157 +2,154 @@ import SwiftUI
 import UIKit
 import PicSigCore
 
-/// Review and tune the automatic masking.
+/// Review and tune the masking.
 ///
-/// The panel is deliberately built around *review* rather than around a single
-/// "blur everything" button: the user sees what was found, why it was found and
-/// what the result will look like, and can then verify that the exported image
-/// really is clean.
+/// One pass reads the whole image; everything it found is listed with a checkbox,
+/// and the user decides what stays masked. The two hand tools — tap a line of text,
+/// or draw a box — sit next to the scan button because they are the fallback for
+/// whatever the scan did not catch. Presets and per-category rules are still
+/// there, but under "advanced": they are defaults, not the workflow.
 struct RedactionPanel: View {
     let model: WorkbenchViewModel
 
-    @State private var expandedCategory: SensitiveCategory?
+    @State private var styleEditingCategory: SensitiveCategory?
+    @State private var isAdvancedExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            summarySection
+        VStack(alignment: .leading, spacing: 6) {
+            primaryRow
+            summaryRow
             if model.needsRescan { rescanNotice }
-            presetSection
-            if !model.matches.isEmpty { categorySection }
-            manualSection
+            if !model.matches.isEmpty { foundSection }
+            manualItemsSection
             verificationSection
+            advancedSection
         }
     }
 
-    // MARK: - Summary
+    // MARK: - Primary actions
 
-    private var summarySection: some View {
-        PanelSection(title: "redact.section.summary") {
-            HStack(spacing: 10) {
-                if model.hasScannedOnce {
-                    Label(summaryText, systemImage: "eye.slash")
-                        .font(.subheadline)
-                        .labelStyle(.titleAndIcon)
-                } else {
-                    Text("redact.notScanned")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    Task { await model.scanForSensitiveInformation() }
-                } label: {
-                    Label(model.hasScannedOnce ? "redact.rescan" : "redact.scan",
-                          systemImage: "sparkle.magnifyingglass")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(model.isScanning)
+    private var primaryRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await model.scanForSensitiveInformation() }
+            } label: {
+                Label(model.hasScannedOnce ? "redact.rescan" : "redact.scan",
+                      systemImage: "sparkle.magnifyingglass")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(model.isScanning || model.isBusy)
 
-            if !model.matches.isEmpty {
-                HStack(spacing: 14) {
-                    Toggle("redact.highlight", isOn: Binding(get: { model.highlightsMatches },
-                                                             set: { model.highlightsMatches = $0 }))
-                        .font(.caption)
-                        .toggleStyle(.button)
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    Button("redact.enableAll") { model.enableAllMatches(true) }
-                    Button("redact.disableAll") { model.enableAllMatches(false) }
+            ChipButton(title: "redact.pickText",
+                       systemImage: "text.viewfinder",
+                       isSelected: model.activeTool == .textPick) {
+                Task { await model.startTextPicking() }
+            }
+            ChipButton(title: "redact.drawBox",
+                       systemImage: "rectangle.dashed",
+                       isSelected: model.activeTool == .redactionBox) {
+                model.activeTool = model.activeTool == .redactionBox ? .none : .redactionBox
+            }
+            Spacer(minLength: 0)
+            styleMenu
+        }
+        .padding(.top, 2)
+    }
+
+    /// Default mask style, applied to hand drawn and tapped areas and offered as the
+    /// bulk choice for everything found.
+    private var styleMenu: some View {
+        Menu {
+            ForEach(RedactionStyle.allCases, id: \.self) { style in
+                Button {
+                    model.setDefaultMaskingStyle(style)
+                    model.setStyleForAllCategories(style)
+                } label: {
+                    Label(LocalizedStringKey(style.localizationKey),
+                          systemImage: model.defaultMaskingStyle == style ? "checkmark" : "circle")
                 }
-                .font(.caption)
-                .buttonStyle(.borderless)
+            }
+        } label: {
+            ChipLabel(title: LocalizedStringKey(model.defaultMaskingStyle.localizationKey),
+                      systemImage: "paintbrush")
+        }
+    }
 
-                Text("redact.tapHint")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            } else if model.hasScannedOnce {
-                Text("redact.nothingFound")
+    private var summaryRow: some View {
+        HStack(spacing: 12) {
+            if model.hasScannedOnce {
+                Text(summaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("redact.notScanned")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Spacer()
+            if !model.matches.isEmpty {
+                Button("redact.enableAll") { model.enableAllMatches(true) }
+                Button("redact.disableAll") { model.enableAllMatches(false) }
+                Toggle(isOn: Binding(get: { model.highlightsMatches },
+                                     set: { model.highlightsMatches = $0 })) {
+                    Image(systemName: "eye")
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .accessibilityLabel("redact.highlight")
+            }
         }
+        .font(.caption)
+        .buttonStyle(.borderless)
     }
 
     private var summaryText: String {
-        String(format: NSLocalizedString("redact.summary.format", comment: "enabled, total"),
-               model.enabledMatchCount,
-               model.matches.count)
+        if model.matches.isEmpty {
+            return NSLocalizedString("redact.nothingFound", comment: "")
+        }
+        return String(format: NSLocalizedString("redact.summary.format", comment: "enabled, total"),
+                      model.enabledMatchCount,
+                      model.matches.count)
     }
 
     private var rescanNotice: some View {
         NoticeRow(level: .warning, text: NSLocalizedString("redact.staleResults", comment: ""))
     }
 
-    // MARK: - Presets
+    // MARK: - Found
 
-    private var presetSection: some View {
-        PanelSection(title: "redact.section.preset") {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(RedactionPreset.all) { preset in
-                        ChipButton(title: LocalizedStringKey(preset.titleKey),
-                                   systemImage: preset.symbolName,
-                                   isSelected: model.activePresetID == preset.id) {
-                            model.apply(preset: preset)
-                        }
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    // MARK: - Categories
-
-    private var categorySection: some View {
-        PanelSection(title: "redact.section.found") {
+    private var foundSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(model.matchesByCategory, id: \.category) { group in
                 CategoryRow(model: model,
                             category: group.category,
                             matches: group.matches,
-                            isExpanded: expandedCategory == group.category) {
+                            isEditingStyle: styleEditingCategory == group.category) {
                     withAnimation(.snappy) {
-                        expandedCategory = expandedCategory == group.category ? nil : group.category
+                        styleEditingCategory = styleEditingCategory == group.category ? nil : group.category
                     }
                 }
             }
+            Text("redact.tapHint")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
-    // MARK: - Manual masking
+    // MARK: - Hand drawn / tapped
 
-    private var manualSection: some View {
-        PanelSection(title: "redact.section.manual",
-                     footnote: "redact.manual.hint") {
-            HStack(spacing: 8) {
-                ChipButton(title: "redact.drawBox",
-                           systemImage: "rectangle.dashed",
-                           isSelected: model.activeTool == .redactionBox) {
-                    model.activeTool = model.activeTool == .redactionBox ? .none : .redactionBox
-                }
-                Menu {
-                    ForEach(RedactionStyle.allCases, id: \.self) { style in
-                        Button {
-                            model.setDefaultMaskingStyle(style)
-                        } label: {
-                            Label(LocalizedStringKey(style.localizationKey),
-                                  systemImage: model.defaultMaskingStyle == style ? "checkmark" : "circle")
-                        }
-                    }
-                } label: {
-                    ChipLabel(title: LocalizedStringKey(model.defaultMaskingStyle.localizationKey),
-                              systemImage: "paintbrush")
-                }
-            }
-
-            let manualItems = model.document.state.redactions.filter(\.isManual)
-            if !manualItems.isEmpty {
+    @ViewBuilder
+    private var manualItemsSection: some View {
+        let manualItems = model.document.state.redactions.filter(\.isManual)
+        if !manualItems.isEmpty {
+            PanelSection(title: "redact.section.manual") {
                 ForEach(manualItems) { item in
                     HStack(spacing: 8) {
-                        Image(systemName: "rectangle.fill")
+                        Image(systemName: item.sourceLineID == nil ? "rectangle.dashed" : "text.viewfinder")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text(LocalizedStringKey(item.style.localizationKey))
@@ -169,6 +166,36 @@ struct RedactionPanel: View {
                 }
             }
         }
+    }
+
+    // MARK: - Advanced
+
+    private var advancedSection: some View {
+        DisclosureGroup(isExpanded: $isAdvancedExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("redact.preset.hint")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(RedactionPreset.all) { preset in
+                            ChipButton(title: LocalizedStringKey(preset.titleKey),
+                                       systemImage: preset.symbolName,
+                                       isSelected: model.activePresetID == preset.id) {
+                                model.apply(preset: preset)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("redact.section.advanced")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Verification
@@ -195,22 +222,22 @@ struct RedactionPanel: View {
 
 // MARK: - Category row
 
-/// One collapsible group: the category, how many values it matched, and — when
-/// opened — exactly how those values are hidden.
+/// One group of findings: the category, a bulk toggle, every value with its own
+/// checkbox, and — on request — how that category is masked.
 private struct CategoryRow: View {
     let model: WorkbenchViewModel
     let category: SensitiveCategory
     let matches: [SensitiveMatch]
-    let isExpanded: Bool
-    let toggleExpanded: () -> Void
+    let isEditingStyle: Bool
+    let toggleStyleEditing: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            if isExpanded {
+            if isEditingStyle {
                 styleControls
-                matchList
             }
+            matchList
         }
         .padding(10)
         .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 10))
@@ -225,18 +252,20 @@ private struct CategoryRow: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer()
-            Toggle("", isOn: Binding(get: { model.isEnabled(category) },
+            Button(action: toggleStyleEditing) {
+                Label(LocalizedStringKey(model.rule(for: category).style.localizationKey),
+                      systemImage: "paintbrush")
+                    .font(.caption2)
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            .tint(isEditingStyle ? .accentColor : .secondary)
+            Toggle("", isOn: Binding(get: { model.isCategoryFullyEnabled(category) },
                                      set: { model.setCategory(category, enabled: $0) }))
                 .labelsHidden()
                 .controlSize(.mini)
-            Button(action: toggleExpanded) {
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: toggleExpanded)
     }
 
     @ViewBuilder

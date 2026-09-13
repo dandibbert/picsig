@@ -16,6 +16,9 @@ public struct RedactionItem: Identifiable, Equatable, Codable, Sendable {
     /// Partly masked copy of the value, safe to show in a report or store in a
     /// project file. The full value never leaves the scanner.
     public var valuePreview: String
+    /// Recognised line a tap-to-mask item covers, so a second tap on the same
+    /// line finds and removes it.
+    public var sourceLineID: Int?
 
     public init(id: UUID = UUID(),
                 box: NormalizedRect,
@@ -26,7 +29,8 @@ public struct RedactionItem: Identifiable, Equatable, Codable, Sendable {
                 category: SensitiveCategory,
                 matchID: UUID? = nil,
                 isManual: Bool = false,
-                valuePreview: String = "") {
+                valuePreview: String = "",
+                sourceLineID: Int? = nil) {
         self.id = id
         self.box = box
         self.style = style
@@ -37,6 +41,7 @@ public struct RedactionItem: Identifiable, Equatable, Codable, Sendable {
         self.matchID = matchID
         self.isManual = isManual
         self.valuePreview = valuePreview
+        self.sourceLineID = sourceLineID
     }
 }
 

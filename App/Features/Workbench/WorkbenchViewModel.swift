@@ -8,13 +8,17 @@ enum EditorTool: Equatable {
     case annotation(AnnotationTool)
     case redactionBox
     case cropBox
+    /// Tap a recognised line of text to mask it. A tap, not a drag, so the
+    /// canvas keeps scrolling while it is armed.
+    case textPick
 
     var annotationTool: AnnotationTool? {
         if case .annotation(let tool) = self { return tool }
         return nil
     }
 
-    var isDrawing: Bool { self != .none }
+    /// Tools that own the drag gesture and therefore suspend scrolling.
+    var isDrawing: Bool { self != .none && self != .textPick }
 }
 
 enum StitchMode: String, CaseIterable, Identifiable {
@@ -48,6 +52,12 @@ final class WorkbenchViewModel {
     private(set) var previewBase: UIImage?
     private(set) var composed: UIImage?
     private var manualOverlaps: [Int: Int] = [:]
+
+    /// How many full resolution pixels one preview pixel stands for.
+    var previewScale: CGFloat {
+        guard let stitched, let previewBase, previewBase.size.width > 0 else { return 1 }
+        return max(1, stitched.size.width / previewBase.size.width)
+    }
 
     // MARK: Editing
 
@@ -332,7 +342,13 @@ final class WorkbenchViewModel {
         let generation = canvasGeneration
 
         let box = CGImageBox(cgImage)
-        let coordinator = settings.coordinator
+        // One pass finds everything; which categories start masked is decided
+        // afterwards from the user's defaults. Scanning only the enabled categories
+        // meant that switching one on later showed an empty list with no hint that
+        // the image had never been read for it.
+        var coordinator = settings.coordinator
+        coordinator.scanSettings.enabledCategories = Set(SensitiveCategory.allCases)
+        let preChecked = settings.scan.enabledCategories
         let result = await Task.detached(priority: .userInitiated) { () -> Result<RedactionCoordinator.ScanResult, Error> in
             do {
                 return .success(try coordinator.scan(image: box.image))
@@ -358,11 +374,62 @@ final class WorkbenchViewModel {
         switch result {
         case .success(let scan):
             layout = scan.layout
-            matches = scan.matches
+            matches = scan.matches.map { match in
+                var match = match
+                match.isEnabled = match.isEnabled && preChecked.contains(match.category)
+                return match
+            }
             rebuildAutomaticRedactions()
         case .failure(let error):
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: Tap-to-mask text
+
+    /// Recognised lines on the current canvas, for the tap-to-mask tool.
+    var textBlocks: [RecognizedTextLine] { layout.lines }
+
+    /// Arms the tap-to-mask tool, reading the image first if it has not been read
+    /// yet — the tool has nothing to offer without a layout.
+    func startTextPicking() async {
+        if activeTool == .textPick {
+            activeTool = .none
+            return
+        }
+        if layout.lines.isEmpty || needsRescan {
+            await scanForSensitiveInformation()
+        }
+        guard !layout.lines.isEmpty else {
+            errorMessage = NSLocalizedString("redact.pickText.noText", comment: "")
+            return
+        }
+        activeTool = .textPick
+    }
+
+    func isTextBlockMasked(_ block: RecognizedTextLine) -> Bool {
+        maskItem(for: block) != nil
+    }
+
+    /// Masks the tapped line, or unmasks it if the tap landed on a mask that came
+    /// from an earlier tap.
+    func toggleTextBlock(at point: NormalizedPoint) {
+        let probe = NormalizedRect(x: point.x, y: point.y, width: 0.0005, height: 0.0005)
+        guard let block = layout.lines.first(where: { $0.box.expanded(byX: 0.003, byY: 0.006).intersects(probe) }) else {
+            return
+        }
+        if let existing = maskItem(for: block) {
+            removeRedaction(existing.id)
+            return
+        }
+        // A little breathing room around the OCR box: Vision's line boxes hug the
+        // glyphs and would leave ascenders and descenders peeking out.
+        let box = block.box.expanded(byX: 0.002, byY: block.box.height * 0.12).clampedToUnitSpace()
+        addManualRedaction(box: box, sourceLineID: block.id)
+    }
+
+    private func maskItem(for block: RecognizedTextLine) -> RedactionItem? {
+        document.state.redactions.first { $0.isManual && $0.sourceLineID == block.id }
     }
 
     func rebuildAutomaticRedactions() {
@@ -386,17 +453,20 @@ final class WorkbenchViewModel {
         } else {
             settings.scan.enabledCategories.remove(category)
         }
+        // Every category was scanned, so this is purely a bulk check / uncheck of
+        // what is already in the list.
         for index in matches.indices where matches[index].category == category {
             matches[index].isEnabled = enabled
         }
-        // The scanner never looked for a category that was off, so switching one on
-        // cannot reveal anything until the image is read again. Without this the
-        // checkbox looks broken for exactly the categories the user cared enough
-        // about to enable.
-        if enabled, hasScannedOnce, !matches.contains(where: { $0.category == category }) {
-            needsRescan = true
-        }
         rebuildAutomaticRedactions()
+    }
+
+    /// Whether every found value in a category is currently masked; the group
+    /// toggle reflects the list rather than the stored default, or it would
+    /// disagree with the checkboxes under it.
+    func isCategoryFullyEnabled(_ category: SensitiveCategory) -> Bool {
+        let group = matches.filter { $0.category == category }
+        return !group.isEmpty && group.allSatisfy(\.isEnabled)
     }
 
     /// Panels read the policy through the model so they never have to reach into
@@ -427,6 +497,18 @@ final class WorkbenchViewModel {
         rebuildAutomaticRedactions()
     }
 
+    /// The panel's single style chip: one choice for every category that was
+    /// found. Replacement text only makes sense for values, so visual categories
+    /// fall back to mosaic when it is picked.
+    func setStyleForAllCategories(_ style: RedactionStyle) {
+        for category in Set(matches.map(\.category)) {
+            var rule = settings.policy.rule(for: category)
+            rule.style = style == .replacement && category.isVisual ? .mosaic : style
+            settings.policy.setRule(rule, for: category)
+        }
+        rebuildAutomaticRedactions()
+    }
+
     func setStrength(_ strength: Double, for category: SensitiveCategory) {
         var rule = settings.policy.rule(for: category)
         rule.strength = strength
@@ -447,9 +529,16 @@ final class WorkbenchViewModel {
         rebuildAutomaticRedactions()
     }
 
+    /// A preset is a set of defaults: which categories start masked and how. The
+    /// image was already read for everything, so applying one is a re-check of the
+    /// existing list, not another scan.
     func apply(preset: RedactionPreset) {
         settings.apply(preset: preset)
-        Task { await scanForSensitiveInformation() }
+        let enabled = settings.scan.enabledCategories
+        for index in matches.indices {
+            matches[index].isEnabled = enabled.contains(matches[index].category)
+        }
+        rebuildAutomaticRedactions()
     }
 
     func enableAllMatches(_ enabled: Bool) {
@@ -457,7 +546,7 @@ final class WorkbenchViewModel {
         rebuildAutomaticRedactions()
     }
 
-    func addManualRedaction(box: NormalizedRect) {
+    func addManualRedaction(box: NormalizedRect, sourceLineID: Int? = nil) {
         guard box.width > 0.002, box.height > 0.002 else { return }
         var rule = settings.policy.defaultRule
         if rule.style == .replacement { rule.style = .mosaic } // nothing to replace by hand
@@ -467,7 +556,8 @@ final class WorkbenchViewModel {
                                               stickerSymbol: rule.stickerSymbol,
                                               category: .custom,
                                               isManual: true,
-                                              valuePreview: NSLocalizedString("redaction.manual", comment: "")))
+                                              valuePreview: NSLocalizedString("redaction.manual", comment: ""),
+                                              sourceLineID: sourceLineID))
         audit = nil
         scheduleRecompose()
     }

@@ -562,6 +562,40 @@
         }
       }
     },
+    "canvas.fitAll": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fit whole image"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示整图"
+          }
+        }
+      }
+    },
+    "canvas.fitWidth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fit width"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "适应宽度"
+          }
+        }
+      }
+    },
     "common.cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -745,6 +779,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "格式"
+          }
+        }
+      }
+    },
+    "export.options": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export options…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出选项…"
           }
         }
       }
@@ -1378,6 +1429,40 @@
         }
       }
     },
+    "inspector.collapse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse panel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收起面板"
+          }
+        }
+      }
+    },
+    "inspector.expand": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expand panel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展开面板"
+          }
+        }
+      }
+    },
     "inspector.export": {
       "extractionState": "manual",
       "localizations": {
@@ -1718,6 +1803,57 @@
         }
       }
     },
+    "redact.pickText": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap text"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点选文字"
+          }
+        }
+      }
+    },
+    "redact.pickText.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap a line of text to mask it; tap again to unmask."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点一下文字即可打码，再点一下取消。"
+          }
+        }
+      }
+    },
+    "redact.pickText.noText": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No text was recognised in this image."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这张图里没有识别到文字。"
+          }
+        }
+      }
+    },
     "redact.preserveLeading.format": {
       "extractionState": "manual",
       "localizations": {
@@ -1752,6 +1888,23 @@
         }
       }
     },
+    "redact.preset.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presets only change which categories start checked and how they are masked. Nothing is rescanned."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预设只改变默认勾选哪些类别以及打码方式，不会重新识别。"
+          }
+        }
+      }
+    },
     "redact.rescan": {
       "extractionState": "manual",
       "localizations": {
@@ -1782,6 +1935,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "开始识别"
+          }
+        }
+      }
+    },
+    "redact.section.advanced": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Advanced: presets"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高级：预设"
           }
         }
       }

@@ -163,7 +163,10 @@ struct HomeView: View {
                     importError = NSLocalizedString("home.error.noImages", comment: "")
                     return
                 }
-                request = .images(images.map(CGImageBox.init))
+                // The single-image card is the redaction entry point; several
+                // images are always a stitch, whichever card started the picker.
+                let intent: WorkbenchRequest.Intent = maximumImageSelection == 1 ? .redact : .stitch
+                request = .images(images.map(CGImageBox.init), intent: intent)
             }
         }
     }
@@ -201,15 +204,23 @@ struct WorkbenchRequest: Identifiable, Hashable {
         case video(URL)
     }
 
+    /// What the user came to do, so the workbench opens on the matching panel
+    /// instead of making them find it.
+    enum Intent {
+        case stitch
+        case redact
+    }
+
     let id = UUID()
     let source: Source
+    let intent: Intent
 
-    static func images(_ boxes: [CGImageBox]) -> WorkbenchRequest {
-        WorkbenchRequest(source: .images(boxes))
+    static func images(_ boxes: [CGImageBox], intent: Intent) -> WorkbenchRequest {
+        WorkbenchRequest(source: .images(boxes), intent: intent)
     }
 
     static func video(_ url: URL) -> WorkbenchRequest {
-        WorkbenchRequest(source: .video(url))
+        WorkbenchRequest(source: .video(url), intent: .stitch)
     }
 
     static func == (lhs: WorkbenchRequest, rhs: WorkbenchRequest) -> Bool { lhs.id == rhs.id }

@@ -23,13 +23,28 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var localizationKey: String { "inspector.\(rawValue)" }
 }
 
+/// The editing screen.
+///
+/// The canvas owns the screen. The panel underneath opens at a height that shows
+/// a tab's primary controls and can be pulled up for the rest, because the image
+/// is the thing being worked on — a settings sheet that hides half of it makes the
+/// result impossible to judge. Export lives in the navigation bar so it is one tap
+/// away from every tab.
 struct WorkbenchView: View {
     let request: WorkbenchRequest
 
     @Environment(AppSettings.self) private var settings
     @State private var model: WorkbenchViewModel?
-    @State private var tab: InspectorTab = .redact
+    @State private var tab: InspectorTab
     @State private var isSharePresented = false
+    @State private var isPanelExpanded = false
+
+    init(request: WorkbenchRequest) {
+        self.request = request
+        _tab = State(initialValue: request.intent == .redact ? .redact : .stitch)
+    }
+
+    private let collapsedPanelHeight: CGFloat = 150
 
     var body: some View {
         Group {
@@ -50,36 +65,15 @@ struct WorkbenchView: View {
     }
 
     private func content(_ model: WorkbenchViewModel) -> some View {
-        VStack(spacing: 0) {
-            CanvasView(model: model)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemGray6))
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                CanvasView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGray6))
 
-            Divider()
-
-            VStack(spacing: 10) {
-                Picker("inspector.picker", selection: $tab) {
-                    ForEach(InspectorTab.allCases) { item in
-                        Label(LocalizedStringKey(item.localizationKey), systemImage: item.symbolName)
-                            .labelStyle(.iconOnly)
-                            .tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-
-                ScrollView {
-                    inspector(model)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 14)
-                }
-                .frame(height: 250)
-                // Leaving a panel with its tool still armed would keep the canvas
-                // from scrolling, which reads as a frozen screen.
-                .onChange(of: tab) { _, _ in model.activeTool = .none }
+                panel(model, availableHeight: proxy.size.height)
+                tabBar(model)
             }
-            .background(Color(.systemBackground))
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -96,6 +90,31 @@ struct WorkbenchView: View {
                     Image(systemName: "arrow.uturn.forward")
                 }
                 .disabled(!model.document.canRedo)
+
+                Menu {
+                    Button {
+                        Task { await model.export(saveToPhotos: true) }
+                    } label: {
+                        Label("export.saveToPhotos", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        Task { await model.export(saveToPhotos: false) }
+                    } label: {
+                        Label("export.share", systemImage: "square.and.arrow.up")
+                    }
+                    Divider()
+                    Button {
+                        tab = .export
+                        isPanelExpanded = true
+                    } label: {
+                        Label("export.options", systemImage: "slider.horizontal.3")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .fontWeight(.semibold)
+                }
+                .disabled(model.isBusy || model.stitched == nil)
+                .accessibilityLabel("inspector.export")
             }
         }
         .overlay {
@@ -116,6 +135,87 @@ struct WorkbenchView: View {
         .sheet(isPresented: $isSharePresented) {
             ActivityView(items: model.exportedFiles)
         }
+    }
+
+    // MARK: - Panel
+
+    private func panel(_ model: WorkbenchViewModel, availableHeight: CGFloat) -> some View {
+        let expandedHeight = min(460, availableHeight * 0.55)
+        return VStack(spacing: 0) {
+            grabber
+            ScrollView {
+                inspector(model)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(height: isPanelExpanded ? expandedHeight : collapsedPanelHeight)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemBackground))
+        .clipped()
+        .overlay(alignment: .top) { Divider() }
+        // Leaving a panel with its tool still armed would keep the canvas from
+        // scrolling, which reads as a frozen screen.
+        .onChange(of: tab) { _, _ in model.activeTool = .none }
+    }
+
+    /// Pull handle: tap or drag to switch between the compact and the full panel.
+    private var grabber: some View {
+        Capsule()
+            .fill(Color(.tertiaryLabel))
+            .frame(width: 36, height: 5)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { togglePanel() }
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        if value.translation.height < -20 { setPanelExpanded(true) }
+                        if value.translation.height > 20 { setPanelExpanded(false) }
+                    }
+            )
+            .accessibilityLabel(isPanelExpanded ? "inspector.collapse" : "inspector.expand")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private func togglePanel() { setPanelExpanded(!isPanelExpanded) }
+
+    private func setPanelExpanded(_ expanded: Bool) {
+        withAnimation(.snappy(duration: 0.28)) { isPanelExpanded = expanded }
+    }
+
+    // MARK: - Tab bar
+
+    private func tabBar(_ model: WorkbenchViewModel) -> some View {
+        HStack(spacing: 0) {
+            ForEach(InspectorTab.allCases) { item in
+                Button {
+                    if tab == item {
+                        togglePanel()
+                    } else {
+                        tab = item
+                    }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: item.symbolName)
+                            .font(.system(size: 19, weight: .medium))
+                            .frame(height: 22)
+                        Text(LocalizedStringKey(item.localizationKey))
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(tab == item ? Color.accentColor : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .background(Color(.systemBackground))
+        .overlay(alignment: .top) { Divider() }
     }
 
     @ViewBuilder

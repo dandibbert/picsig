@@ -8,11 +8,18 @@ import PicSigCore
 /// divided by the content size is exactly the normalised coordinate the core
 /// models use — no inverse transform maths, and therefore no drift between what
 /// the user draws and what gets exported.
+///
+/// Zoom is expressed relative to "fits the width". A long screenshot opens fully
+/// visible — that is the only way to judge whether the stitch is right — and can
+/// be zoomed anywhere between that and several times the width.
 struct CanvasView: View {
     let model: WorkbenchViewModel
 
+    @Environment(\.displayScale) private var displayScale
+
     @State private var zoom: CGFloat = 1
     @State private var committedZoom: CGFloat = 1
+    @State private var fittedImageSize: CGSize = .zero
     @State private var strokePoints: [NormalizedPoint] = []
     @State private var dragStart: NormalizedPoint?
     @State private var dragCurrent: NormalizedPoint?
@@ -20,15 +27,30 @@ struct CanvasView: View {
     @State private var textInput = ""
     @State private var isTextPromptPresented = false
 
+    private let maximumZoom: CGFloat = 8
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView([.vertical, .horizontal]) {
                 content(containerSize: proxy.size)
+                    .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
             }
             .scrollDisabled(model.activeTool.isDrawing)
             .overlay(alignment: .bottomTrailing) {
-                zoomControls
-                    .padding(12)
+                if let image = model.composed ?? model.previewBase {
+                    zoomControls(imageSize: image.size, container: proxy.size)
+                        .padding(12)
+                }
+            }
+            .overlay(alignment: .top) {
+                if model.activeTool == .textPick {
+                    Text("redact.pickText.hint")
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.thinMaterial, in: Capsule())
+                        .padding(.top, 10)
+                }
             }
         }
         .alert("annotate.text.prompt", isPresented: $isTextPromptPresented) {
@@ -52,15 +74,26 @@ struct CanvasView: View {
                 if model.highlightsMatches {
                     matchOverlay(size: contentSize)
                 }
+                if model.activeTool == .textPick {
+                    textBlockOverlay(size: contentSize)
+                }
                 inProgressOverlay(size: contentSize)
                 seamOverlay(size: contentSize)
             }
             .frame(width: contentSize.width, height: contentSize.height)
             .contentShape(Rectangle())
-            .gesture(canvasGesture(size: contentSize))
+            .modifier(CanvasGestures(isDrawing: model.activeTool.isDrawing,
+                                     drawing: canvasGesture(size: contentSize),
+                                     onTap: { location in handleTap(location, size: contentSize) }))
             .simultaneousGesture(zoomGesture)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            .padding(8)
+            .onAppear { fitWhole(imageSize: image.size, container: containerSize) }
+            // A new stitch (or a crop) changes the aspect ratio; the old zoom would
+            // leave it half off screen, so start over from "everything visible".
+            .onChange(of: image.size) { _, newSize in
+                guard newSize != fittedImageSize else { return }
+                fitWhole(imageSize: newSize, container: containerSize)
+            }
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "photo.stack")
@@ -73,35 +106,87 @@ struct CanvasView: View {
         }
     }
 
+    // MARK: - Zoom
+
+    private func fitWidthPoints(container: CGSize) -> CGFloat {
+        max(80, container.width - 16)
+    }
+
     private func fittedSize(for imageSize: CGSize, container: CGSize) -> CGSize {
         guard imageSize.width > 0, imageSize.height > 0, container.width > 0 else { return .zero }
-        let width = max(80, container.width - 24) * zoom
+        let width = fitWidthPoints(container: container) * zoom
         return CGSize(width: width, height: width * imageSize.height / imageSize.width)
     }
 
-    private var zoomControls: some View {
-        HStack(spacing: 6) {
+    /// Zoom at which the whole image is on screen. Below 1 for anything taller than
+    /// the container — which is every long screenshot.
+    private func fitWholeZoom(imageSize: CGSize, container: CGSize) -> CGFloat {
+        guard imageSize.width > 0, imageSize.height > 0, container.height > 16 else { return 1 }
+        let widthAtFit = fitWidthPoints(container: container)
+        let heightAtFit = widthAtFit * imageSize.height / imageSize.width
+        return min(1, (container.height - 16) / heightAtFit)
+    }
+
+    private func minimumZoom(imageSize: CGSize, container: CGSize) -> CGFloat {
+        // Allow a little past "fits" so the image never feels stuck to the edges.
+        fitWholeZoom(imageSize: imageSize, container: container) * 0.8
+    }
+
+    private func fitWhole(imageSize: CGSize, container: CGSize) {
+        fittedImageSize = imageSize
+        zoom = fitWholeZoom(imageSize: imageSize, container: container)
+        committedZoom = zoom
+    }
+
+    /// Scale of the image on screen relative to its own pixels, which is what a
+    /// percentage should mean: 100% is one image pixel per device pixel.
+    private func pixelPercent(imageSize: CGSize, container: CGSize) -> Int {
+        guard imageSize.width > 0 else { return 100 }
+        let pointsWide = fitWidthPoints(container: container) * zoom
+        let editingPixels = model.previewScale * imageSize.width
+        return Int((pointsWide * displayScale / editingPixels * 100).rounded())
+    }
+
+    private func zoomControls(imageSize: CGSize, container: CGSize) -> some View {
+        let minimum = minimumZoom(imageSize: imageSize, container: container)
+        let wholeZoom = fitWholeZoom(imageSize: imageSize, container: container)
+        let isWhole = abs(zoom - wholeZoom) < 0.01
+        return HStack(spacing: 4) {
             Button {
-                withAnimation(.snappy) { setZoom(zoom - 0.5) }
+                withAnimation(.snappy) { setZoom(zoom / 1.5, minimum: minimum) }
             } label: {
                 Image(systemName: "minus.magnifyingglass")
             }
-            Text(String(format: "%.1f×", zoom))
+            .disabled(zoom <= minimum + 0.001)
+
+            Text("\(pixelPercent(imageSize: imageSize, container: container))%")
                 .font(.caption.monospacedDigit())
-                .frame(width: 38)
+                .frame(width: 44)
+
             Button {
-                withAnimation(.snappy) { setZoom(zoom + 0.5) }
+                withAnimation(.snappy) { setZoom(zoom * 1.5, minimum: minimum) }
             } label: {
                 Image(systemName: "plus.magnifyingglass")
             }
+            .disabled(zoom >= maximumZoom - 0.001)
+
+            Divider().frame(height: 16)
+
+            Button {
+                withAnimation(.snappy) { setZoom(isWhole ? 1 : wholeZoom, minimum: minimum) }
+            } label: {
+                Image(systemName: isWhole ? "arrow.left.and.right" : "arrow.down.right.and.arrow.up.left")
+            }
+            .accessibilityLabel(isWhole ? "canvas.fitWidth" : "canvas.fitAll")
         }
+        .buttonStyle(.borderless)
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(.thinMaterial, in: Capsule())
     }
 
-    private func setZoom(_ value: CGFloat) {
-        zoom = min(6, max(1, value))
+    private func setZoom(_ value: CGFloat, minimum: CGFloat) {
+        zoom = min(maximumZoom, max(minimum, value))
         committedZoom = zoom
     }
 
@@ -115,7 +200,8 @@ struct CanvasView: View {
         MagnifyGesture()
             .onChanged { value in
                 guard !model.activeTool.isDrawing else { return }
-                zoom = min(6, max(1, committedZoom * value.magnification))
+                let floor = fittedImageSize == .zero ? 0.1 : 0.05
+                zoom = min(maximumZoom, max(floor, committedZoom * value.magnification))
             }
             .onEnded { _ in
                 committedZoom = zoom
@@ -218,14 +304,64 @@ struct CanvasView: View {
         .frame(width: size.width, height: size.height)
     }
 
+    /// Every recognised line of text, so one tap can mask it. Lines that already
+    /// carry a mask are shown filled, the rest as a thin outline.
+    private func textBlockOverlay(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(model.textBlocks) { block in
+                let rect = block.box.cgRect(in: size)
+                let masked = model.isTextBlockMasked(block)
+                RoundedRectangle(cornerRadius: 2)
+                    .strokeBorder(masked ? Color.black : Color.accentColor.opacity(0.8), lineWidth: 1)
+                    .background {
+                        (masked ? Color.black.opacity(0.35) : Color.accentColor.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                    }
+                    .frame(width: max(rect.width, 3), height: max(rect.height, 3))
+                    .offset(x: rect.minX, y: rect.minY)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
     // MARK: - Gestures
+
+    /// Attaches the drawing drag only while a tool is armed. A drag recogniser with
+    /// no minimum distance competes with the scroll view for every touch, so having
+    /// it installed in view mode is what made the canvas feel stuck; a plain tap is
+    /// all view mode needs.
+    private struct CanvasGestures<Drawing: Gesture>: ViewModifier {
+        let isDrawing: Bool
+        let drawing: Drawing
+        let onTap: (CGPoint) -> Void
+
+        func body(content: Content) -> some View {
+            if isDrawing {
+                content.gesture(drawing)
+            } else {
+                content.onTapGesture(count: 1, coordinateSpace: .local) { location in onTap(location) }
+            }
+        }
+    }
+
+    private func handleTap(_ location: CGPoint, size: CGSize) {
+        let point = normalized(location, in: size)
+        switch model.activeTool {
+        case .textPick:
+            model.toggleTextBlock(at: point)
+        case .none:
+            toggleMatch(at: point)
+        default:
+            break
+        }
+    }
 
     private func canvasGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
                 let point = normalized(value.location, in: size)
                 switch model.activeTool {
-                case .none:
+                case .none, .textPick:
                     break
                 case .annotation(let tool):
                     if tool == .text || tool == .numberBadge { break }
@@ -252,8 +388,8 @@ struct CanvasView: View {
                 }
 
                 switch model.activeTool {
-                case .none:
-                    toggleMatch(at: point)
+                case .none, .textPick:
+                    break
                 case .annotation(let tool):
                     switch tool {
                     case .text:
