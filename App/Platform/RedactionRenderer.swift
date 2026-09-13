@@ -73,30 +73,75 @@ enum RedactionRenderer {
                                    options: Options) {
         let block = blockSize(for: rect, strength: item.strength, options: options)
         guard let cgImage = source.cgImage,
-              let cropped = cgImage.cropping(to: rect) else {
+              let cropped = cgImage.cropping(to: rect),
+              let pixels = rgbaPixels(of: cropped) else {
             drawSolid(rect: rect, context: context)
             return
         }
 
-        let columns = max(1, Int(rect.width) / block)
-        let rows = max(1, Int(rect.height) / block)
+        // Each block is filled with the plain average of the pixels it replaces,
+        // computed here rather than by drawing a shrunken copy back at size: the
+        // scaled draw came out black on the simulator, so the result contains
+        // exactly `columns * rows` colours and nothing depends on how Core Graphics
+        // chooses to resample.
+        let width = cropped.width
+        let height = cropped.height
+        let columns = max(1, width / block)
+        let rows = max(1, height / block)
 
-        // Shrink with the high quality filter, in two steps, so every block is the
-        // *average* of the pixels it replaces — a single medium quality pass
-        // point-sampled at this ratio and turned black-on-white text into near
-        // black blocks. Then scale back up with no interpolation, so the result
-        // contains only `columns * rows` distinct colours.
-        let halfway = resampled(UIImage(cgImage: cropped), to: CGSize(width: columns * 2, height: rows * 2))
-        let small = resampled(halfway, to: CGSize(width: columns, height: rows))
-
-        context.cgContext.saveGState()
-        context.cgContext.interpolationQuality = .none
-        small.draw(in: rect)
-        context.cgContext.restoreGState()
+        for row in 0..<rows {
+            let top = row * height / rows
+            let bottom = (row + 1) * height / rows
+            for column in 0..<columns {
+                let left = column * width / columns
+                let right = (column + 1) * width / columns
+                var red = 0, green = 0, blue = 0
+                for y in top..<bottom {
+                    var offset = (y * width + left) * 4
+                    for _ in left..<right {
+                        red += Int(pixels[offset])
+                        green += Int(pixels[offset + 1])
+                        blue += Int(pixels[offset + 2])
+                        offset += 4
+                    }
+                }
+                let count = CGFloat(max(1, (bottom - top) * (right - left)) * 255)
+                UIColor(red: CGFloat(red) / count,
+                        green: CGFloat(green) / count,
+                        blue: CGFloat(blue) / count,
+                        alpha: 1).setFill()
+                context.fill(CGRect(x: rect.minX + CGFloat(left),
+                                    y: rect.minY + CGFloat(top),
+                                    width: CGFloat(right - left),
+                                    height: CGFloat(bottom - top)))
+            }
+        }
 
         if options.addsMosaicNoise {
             drawNoise(in: rect, block: block, seed: item.id.hashValue, context: context)
         }
+    }
+
+    /// The image's pixels as tightly packed 8 bit RGBX rows, top row first.
+    private static func rgbaPixels(of image: CGImage) -> [UInt8]? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress,
+                                          width: width,
+                                          height: height,
+                                          bitsPerComponent: 8,
+                                          bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return drawn ? bytes : nil
     }
 
     private static func blockSize(for rect: CGRect, strength: Double, options: Options) -> Int {
