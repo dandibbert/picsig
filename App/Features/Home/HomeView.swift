@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var videoSelection: PhotosPickerItem?
     @State private var isPhotoPickerPresented = false
+    @State private var maximumImageSelection = 40
     @State private var isVideoPickerPresented = false
     @State private var isSettingsPresented = false
     @State private var isImporting = false
@@ -45,7 +46,7 @@ struct HomeView: View {
             }
             .photosPicker(isPresented: $isPhotoPickerPresented,
                           selection: $photoSelection,
-                          maxSelectionCount: 40,
+                          maxSelectionCount: maximumImageSelection,
                           selectionBehavior: .ordered,
                           matching: .images,
                           photoLibrary: .shared())
@@ -94,6 +95,7 @@ struct HomeView: View {
                        title: "home.action.stitch.title",
                        subtitle: "home.action.stitch.subtitle",
                        tint: .blue) {
+                maximumImageSelection = 40
                 isPhotoPickerPresented = true
             }
             ActionCard(icon: "record.circle",
@@ -106,6 +108,7 @@ struct HomeView: View {
                        title: "home.action.redact.title",
                        subtitle: "home.action.redact.subtitle",
                        tint: .indigo) {
+                maximumImageSelection = 1
                 isPhotoPickerPresented = true
             }
         }

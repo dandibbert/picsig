@@ -75,6 +75,9 @@ struct WorkbenchView: View {
                         .padding(.bottom, 14)
                 }
                 .frame(height: 250)
+                // Leaving a panel with its tool still armed would keep the canvas
+                // from scrolling, which reads as a frozen screen.
+                .onChange(of: tab) { _, _ in model.activeTool = .none }
             }
             .background(Color(.systemBackground))
         }

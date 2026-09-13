@@ -124,7 +124,6 @@ final class AppSettings {
     }
 
     private static let storageKey = "PicSig.settings.v1"
-    private var isLoading = false
 
     init(scan: ScanSettings = .default,
          policy: MaskingPolicy = .default,
@@ -157,23 +156,23 @@ final class AppSettings {
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else {
             return AppSettings()
         }
-        let settings = AppSettings(scan: stored.scan,
-                                   policy: stored.policy,
-                                   export: stored.export,
-                                   stitch: stored.stitch,
-                                   watermarkText: stored.watermarkText,
-                                   isWatermarkEnabled: stored.isWatermarkEnabled,
-                                   scansOnImport: stored.scansOnImport,
-                                   verifiesBeforeExport: stored.verifiesBeforeExport,
-                                   detectsFaces: stored.detectsFaces,
-                                   detectsBarcodes: stored.detectsBarcodes,
-                                   pseudonymSalt: stored.pseudonymSalt,
-                                   presetID: stored.presetID)
-        return settings
+        // The memberwise init assigns before any observer runs, so loading does
+        // not write the same blob straight back to disk.
+        return AppSettings(scan: stored.scan,
+                           policy: stored.policy,
+                           export: stored.export,
+                           stitch: stored.stitch,
+                           watermarkText: stored.watermarkText,
+                           isWatermarkEnabled: stored.isWatermarkEnabled,
+                           scansOnImport: stored.scansOnImport,
+                           verifiesBeforeExport: stored.verifiesBeforeExport,
+                           detectsFaces: stored.detectsFaces,
+                           detectsBarcodes: stored.detectsBarcodes,
+                           pseudonymSalt: stored.pseudonymSalt,
+                           presetID: stored.presetID)
     }
 
     private func save() {
-        guard !isLoading else { return }
         let stored = Stored(scan: scan,
                             policy: policy,
                             export: export,
