@@ -98,6 +98,11 @@ struct EditorView: View {
                 textPoint = nil; text = ""
             }
         }
+        .onChange(of: session.busy) { oldValue, newValue in
+            if oldValue, !newValue, session.preview == nil {
+                session.refreshPreview()
+            }
+        }
         .onChange(of: phase) { _, value in if value != .active { reveal = false } }
         .onDisappear { reveal = false }
     }
