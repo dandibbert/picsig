@@ -15,8 +15,9 @@ import PicSigCore
 ///   through the new glyphs.
 enum RedactionRenderer {
     /// Creating a `CIContext` is expensive; one masked screenshot can contain
-    /// dozens of blurred areas.
-    static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+    /// dozens of blurred areas. `CIContext` is thread safe, and masking always
+    /// runs off the main actor, so sharing one instance across tasks is fine.
+    nonisolated(unsafe) static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
 
     struct Options {
         /// Mosaic block size at strength 0, in pixels.

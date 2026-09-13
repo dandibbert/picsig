@@ -102,9 +102,7 @@ struct TextRecognitionService {
         request.recognitionLanguages = options.recognitionLanguages
         request.usesLanguageCorrection = options.usesLanguageCorrection
         request.minimumTextHeight = options.minimumTextHeight
-        if #available(iOS 16.0, *) {
-            request.automaticallyDetectsLanguage = false
-        }
+        request.automaticallyDetectsLanguage = false
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         try handler.perform([request])
         return request.results ?? []

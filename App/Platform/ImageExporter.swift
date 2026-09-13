@@ -56,7 +56,7 @@ enum ImageExporter {
     static func encode(_ image: UIImage, options: ExportOptions) throws -> Data {
         guard let cgImage = image.cgImage else { throw ExportError.noImage }
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data,
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData,
                                                                 options.format.utType as CFString,
                                                                 1,
                                                                 nil) else {
