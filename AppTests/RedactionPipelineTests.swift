@@ -62,16 +62,30 @@ final class RedactionPipelineTests: XCTestCase {
         XCTAssertEqual(match.contextLabel, "联系电话")
     }
 
+    /// Both values below carry real checksums — a Luhn valid UnionPay number and an ID
+    /// whose MOD 11-2 check digit is correct. Using invalid ones would prove nothing,
+    /// because the detector is supposed to reject those.
     func testBankCardAndIDCardAreDetectedWithChecksums() throws {
         let image = SyntheticScreenshot.make(rows: [
-            .init(label: "银行卡号", value: "6222021234567890123"),
-            .init(label: "身份证号", value: "11010119900307617X")
+            .init(label: "银行卡号", value: Self.luhnValidCard),
+            .init(label: "身份证号", value: Self.validChinaID)
         ])
 
         let result = try scan(image, using: coordinator())
         let categories = Set(result.matches.map(\.category))
         XCTAssertTrue(categories.contains(.bankCard), "no bank card; got \(describe(result.matches))")
         XCTAssertTrue(categories.contains(.idCard), "no ID card; got \(describe(result.matches))")
+    }
+
+    /// The flip side: a number that looks like an ID but fails its check digit must not
+    /// be reported as one. This is what keeps order numbers from being masked as IDs.
+    func testIDCardWithABadCheckDigitIsNotReportedAsAnID() throws {
+        let image = SyntheticScreenshot.make(rows: [
+            .init(label: "订单编号", value: "11010119900307617X")
+        ])
+        let result = try scan(image, using: coordinator())
+        XCTAssertFalse(result.matches.contains { $0.category == .idCard },
+                       "an ID with a wrong check digit was accepted; got \(describe(result.matches))")
     }
 
     func testEmailIsDetected() throws {
@@ -103,41 +117,60 @@ final class RedactionPipelineTests: XCTestCase {
     /// the UI recommends for anything that must not be recoverable.
     func testMosaicMaskedIDCardIsNoLongerReadable() throws {
         let image = SyntheticScreenshot.make(rows: [
-            .init(label: "身份证号", value: "11010119900307617X")
+            .init(label: "身份证号", value: Self.validChinaID)
         ])
         var policy = destructivePolicy
         policy.defaultRule = MaskingRule(style: .mosaic, strength: 0.95)
         let coordinator = self.coordinator(policy: policy)
 
         let scanned = try scan(image, using: coordinator)
-        XCTAssertFalse(scanned.plan.isEmpty)
+        XCTAssertFalse(scanned.plan.isEmpty, "nothing planned, so the rest of this test proves nothing")
 
         let masked = RedactionRenderer.apply(plan: scanned.plan, to: image)
         let reread = try recognisedText(in: masked)
-        XCTAssertFalse(reread.contains("11010119900307617"),
+        XCTAssertFalse(reread.contains(Self.validChinaID.dropLast()),
                        "the ID number survived masking. Re-read:\n\(reread)")
     }
 
-    /// Character level masking is what keeps a masked row recognisable. The preserved
-    /// digits have to survive and the hidden ones must not — this is the shipping
-    /// default for phone numbers, so it is worth pinning down on real pixels.
-    func testPreservedDigitsStayReadableAndTheRestDoNot() throws {
+    /// Character level masking is what keeps a masked row recognisable, and it is the
+    /// shipping default for phone numbers, so it is worth pinning down on real pixels.
+    ///
+    /// The assertion counts surviving digits rather than looking for exact substrings:
+    /// OCR reading an isolated `138` next to a black bar as `13%` is noise, not a bug,
+    /// but it still tells us the digits were not destroyed. Masking the whole value is
+    /// rendered as a control so the comparison means something.
+    func testPreservedDigitsSurviveWhileTheMiddleDoesNot() throws {
         let image = SyntheticScreenshot.make(rows: [
             .init(label: "联系电话", value: "13812345678")
         ])
-        var policy = MaskingPolicy(defaultRule: MaskingRule(style: .solid, strength: 1), overrides: [:])
-        policy.setRule(MaskingRule(style: .solid, preserveLeading: 3, preserveTrailing: 4, strength: 1),
-                       for: .phoneNumber)
-        let coordinator = self.coordinator(policy: policy)
 
-        let scanned = try scan(image, using: coordinator)
-        XCTAssertFalse(scanned.plan.isEmpty)
+        func maskedDigitCount(preserveLeading: Int, preserveTrailing: Int) throws -> (digits: Int, text: String) {
+            var policy = MaskingPolicy(defaultRule: MaskingRule(style: .solid, strength: 1), overrides: [:])
+            policy.setRule(MaskingRule(style: .solid,
+                                       preserveLeading: preserveLeading,
+                                       preserveTrailing: preserveTrailing,
+                                       strength: 1),
+                           for: .phoneNumber)
+            let scanned = try scan(image, using: coordinator(policy: policy))
+            XCTAssertFalse(scanned.plan.isEmpty)
+            let text = try recognisedText(in: RedactionRenderer.apply(plan: scanned.plan, to: image))
+            return (text.filter(\.isNumber).count, text)
+        }
 
-        let masked = RedactionRenderer.apply(plan: scanned.plan, to: image)
-        let reread = try recognisedText(in: masked)
-        XCTAssertFalse(reread.contains("13812345678"), "the full number is still readable:\n\(reread)")
-        XCTAssertTrue(reread.contains("138") || reread.contains("5678"),
-                      "character level masking hid the whole value; re-read:\n\(reread)")
+        let everything = try maskedDigitCount(preserveLeading: 0, preserveTrailing: 0)
+        let partial = try maskedDigitCount(preserveLeading: 3, preserveTrailing: 4)
+
+        XCTAssertFalse(partial.text.contains("13812345678"),
+                       "the full number is still readable:\n\(partial.text)")
+        XCTAssertGreaterThan(partial.digits, everything.digits,
+                             """
+                             character level masking left no more digits than masking \
+                             everything, so the preserve settings did nothing.
+                             preserved 3+4: \(partial.text)
+                             preserved none: \(everything.text)
+                             """)
+        XCTAssertGreaterThanOrEqual(partial.digits, 3,
+                                    "expected roughly 3 leading + 4 trailing digits, got \(partial.text)")
     }
 
     // MARK: - Verification
@@ -147,7 +180,7 @@ final class RedactionPipelineTests: XCTestCase {
     func testAuditIsCleanAfterMasking() throws {
         let image = SyntheticScreenshot.make(rows: [
             .init(label: "联系电话", value: "13812345678"),
-            .init(label: "银行卡号", value: "6222021234567890123")
+            .init(label: "银行卡号", value: Self.luhnValidCard)
         ])
         let coordinator = self.coordinator(policy: destructivePolicy)
         let scanned = try scan(image, using: coordinator)
@@ -182,6 +215,12 @@ final class RedactionPipelineTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// Luhn valid, UnionPay prefix, so it satisfies the strict `bank.card` rule rather
+    /// than only the context-only fallback.
+    private static let luhnValidCard = "6222021234567894"
+    /// MOD 11-2 check digit is correct for 11010119900307617.
+    private static let validChinaID = "110101199003076173"
 
     private func recognisedText(in image: UIImage) throws -> String {
         var service = TextRecognitionService()
