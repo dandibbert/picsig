@@ -71,9 +71,26 @@ public enum ScrollStitchPlanner {
         let width = pyramids.map(\.width).min() ?? 0
         guard width > 0, let firstHeight = pyramids.first?.height, firstHeight > 0 else { return .empty }
 
-        let fixed = options.trimFixedRegions
-            ? FixedRegionDetector.detect(pyramids: pyramids, options: options.fixedRegions)
-            : .none
+        // Alignment runs on the whole images first. The static chrome is derived
+        // from the confident alignments rather than guessed beforehand, because
+        // "rows that look identical at the same position" is not a usable
+        // definition of a navigation bar: translucent bars fail it, and blank
+        // content rows pass it.
+        var alignments = [Int: ScrollAlignment]()
+        for index in 1..<pyramids.count {
+            alignments[index] = ScrollAligner.align(previous: pyramids[index - 1],
+                                                    next: pyramids[index],
+                                                    options: options.detector)
+        }
+
+        let fixed: FixedRegions
+        if options.trimFixedRegions {
+            fixed = FixedRegionDetector.combine(alignments.values.filter {
+                $0.scrollDelta > 0 && $0.confidence >= options.minConfidence
+            }.map(\.fixedRegions))
+        } else {
+            fixed = .none
+        }
         let headerLength = options.trimFixedRegions && options.keepHeader ? fixed.topLength : 0
         let footerLength = options.trimFixedRegions && options.keepFooter ? fixed.bottomLength : 0
 
@@ -125,17 +142,28 @@ public enum ScrollStitchPlanner {
             var confidence: Double
             var isManual = false
 
+            // Pairs are normally consecutive; after a skipped duplicate the
+            // previous *used* shot is further back and needs its own alignment.
+            let alignment = previousUsed == index - 1
+                ? alignments[index]
+                : ScrollAligner.align(previous: pyramids[previousUsed], next: pyramids[index], options: options.detector)
+
             if let manual = manualOverlaps[index] {
                 overlap = manual
                 confidence = 1
                 isManual = true
-            } else if let match = OverlapDetector.detect(previous: pyramids[previousUsed],
-                                                        next: pyramids[index],
-                                                        previousContent: previousContent,
-                                                        nextContent: nextContent,
-                                                        options: options.detector) {
-                confidence = match.confidence
-                overlap = match.confidence >= options.minConfidence ? match.overlap : options.fallbackOverlap
+            } else if let alignment {
+                confidence = alignment.confidence
+                if alignment.confidence < options.minConfidence {
+                    overlap = options.fallbackOverlap
+                } else if alignment.scrollDelta == 0 {
+                    // Nothing moved: the whole content is shared, so nothing is appended.
+                    overlap = min(previousContent.count, nextContent.count)
+                } else {
+                    overlap = OverlapDetector.sharedRows(previous: previousContent,
+                                                         next: nextContent,
+                                                         scrollDelta: alignment.scrollDelta)
+                }
             } else {
                 overlap = options.fallbackOverlap
                 confidence = 0

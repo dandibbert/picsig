@@ -98,16 +98,22 @@ public struct GrayImage: Equatable, Sendable {
 
     /// Mean absolute difference between two rows of two images, sampling every
     /// `stride`-th column. Both images must share the same width.
-    public func rowDifference(_ y: Int, to other: GrayImage, row otherY: Int, stride: Int = 1) -> Double {
+    ///
+    /// `insetX` columns at each edge are skipped. The scroll indicator lives in
+    /// the right hand gutter and sits at a different height in every capture, so
+    /// including it would penalise every correct alignment.
+    public func rowDifference(_ y: Int, to other: GrayImage, row otherY: Int,
+                              stride: Int = 1, insetX: Int = 0) -> Double {
         let sampleStride = max(1, stride)
         let commonWidth = min(width, other.width)
-        guard commonWidth > 0 else { return 0 }
+        let inset = max(0, min(insetX, commonWidth / 4))
+        guard commonWidth - 2 * inset > 0 else { return 0 }
         var total = 0
         var count = 0
-        var x = 0
+        var x = inset
         let base = y * width
         let otherBase = otherY * other.width
-        while x < commonWidth {
+        while x < commonWidth - inset {
             let a = Int(pixels[base + x])
             let b = Int(other.pixels[otherBase + x])
             total += abs(a - b)
@@ -115,6 +121,34 @@ public struct GrayImage: Equatable, Sendable {
             x += sampleStride
         }
         return count > 0 ? Double(total) / Double(count) : 0
+    }
+
+    /// Fraction of sampled columns whose values are within `tolerance` of each
+    /// other.
+    ///
+    /// Unlike the mean difference this is not dominated by one small region that
+    /// changed: a status bar whose clock ticked still matches on ~90% of its
+    /// columns, and a translucent bar whose backdrop shifted a little still
+    /// matches wherever the change stayed under the tolerance.
+    public func rowMatchFraction(_ y: Int, to other: GrayImage, row otherY: Int,
+                                 tolerance: Int, stride: Int = 1, insetX: Int = 0) -> Double {
+        let sampleStride = max(1, stride)
+        let commonWidth = min(width, other.width)
+        let inset = max(0, min(insetX, commonWidth / 4))
+        guard commonWidth - 2 * inset > 0 else { return 0 }
+        var matches = 0
+        var count = 0
+        var x = inset
+        let base = y * width
+        let otherBase = otherY * other.width
+        while x < commonWidth - inset {
+            if abs(Int(pixels[base + x]) - Int(other.pixels[otherBase + x])) <= tolerance {
+                matches += 1
+            }
+            count += 1
+            x += sampleStride
+        }
+        return count > 0 ? Double(matches) / Double(count) : 0
     }
 
     /// Standard deviation of a row; near-zero means a flat band (background,

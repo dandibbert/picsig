@@ -147,9 +147,22 @@ public enum VideoScrollPlanner {
         let width = pyramids.map(\.width).min() ?? 0
         guard width > 0 else { return .empty }
 
-        let fixed = options.trimFixedRegions
-            ? FixedRegionDetector.detect(pyramids: pyramids, options: options.fixedRegions)
-            : .none
+        // Chrome is measured from frame pairs that actually moved; frames where
+        // nothing scrolled carry no information about what is fixed.
+        var fixed = FixedRegions.none
+        if options.trimFixedRegions {
+            var measured = [FixedRegions]()
+            for index in 1..<pyramids.count {
+                if let alignment = ScrollAligner.align(previous: pyramids[index - 1],
+                                                       next: pyramids[index],
+                                                       options: options.detector),
+                   alignment.scrollDelta >= options.minAdvance,
+                   alignment.confidence >= options.minConfidence {
+                    measured.append(alignment.fixedRegions)
+                }
+            }
+            fixed = FixedRegionDetector.combine(measured)
+        }
         let headerLength = options.trimFixedRegions && options.keepHeader ? fixed.topLength : 0
         let footerLength = options.trimFixedRegions && options.keepFooter ? fixed.bottomLength : 0
 

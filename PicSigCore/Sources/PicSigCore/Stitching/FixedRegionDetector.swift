@@ -26,7 +26,24 @@ public struct FixedRegions: Equatable, Sendable {
 /// artefact of a naive long screenshot, so the bands are measured on every
 /// consecutive pair and the intersection (the most conservative estimate) is
 /// used.
+///
+/// The pairwise `detect` here compares rows at the same position and is only
+/// dependable on opaque bars over textured content. `ScrollStitchPlanner` uses
+/// `ScrollAligner`'s alignment-aware measurement instead and combines the per-pair
+/// results with `combine`; this detector remains for callers that have no
+/// alignment to work from.
 public enum FixedRegionDetector {
+    /// Intersection of several per-pair measurements: a row only counts as fixed
+    /// if it stayed put in every pair.
+    public static func combine(_ regions: [FixedRegions]) -> FixedRegions {
+        guard var result = regions.first else { return .none }
+        for region in regions.dropFirst() {
+            result = FixedRegions(topLength: min(result.topLength, region.topLength),
+                                  bottomLength: min(result.bottomLength, region.bottomLength))
+        }
+        return result
+    }
+
     public struct Options: Sendable {
         /// Mean absolute row difference below which two rows count as identical.
         public var tolerance: Double
