@@ -100,6 +100,7 @@ App/
     Localizable.xcstrings    简体中文 + English
     InfoPlist.xcstrings      权限文案
     Assets.xcassets
+AppTests/                  跑在模拟器上的端到端测试（真实 Vision / CoreGraphics）
 PicSigCore/                纯 Swift 核心包，不依赖任何 Apple 图形框架
   Sources/PicSigCore/
     Geometry/ Imaging/ Stitching/ Redaction/ Editing/ Export/
@@ -127,16 +128,51 @@ xcodebuild -project PicSig.xcodeproj -scheme PicSig \
 
 ## 测试
 
+分两层，因为两层能证明的事情不一样。
+
+### 核心包：算法层（Linux，无需 macOS）
+
 ```bash
 cd PicSigCore && swift test
 ```
 
-CI 里也跑这一套（`.github/workflows/core-tests.yml`，Linux 容器，无需 macOS runner）。
-
 141 个用例，覆盖重叠检测、固定区域识别、滚动 / 录屏 / 手动排版规划、
 校验位、上下文判定、规则冲突、遮盖规划与合并、脱敏生成、覆盖率与回读审计、
 接缝坐标缩放、画布↔原图坐标往返、标记随几何变换搬迁、撤销栈与分页切割。
-测试用的截图由 `SyntheticImage` 确定性生成，不依赖素材文件。
+截图由 `SyntheticImage` 确定性生成，不依赖素材文件。
+
+这一层用手搭的文字布局验证规则，证明的是"规则写对了"。
+
+### App：真实框架层（模拟器）
+
+```bash
+xcodebuild test -project PicSig.xcodeproj -scheme PicSig \
+                -destination 'platform=iOS Simulator,name=iPhone 16'
+```
+
+15 个用例（`AppTests/`），跑在真实的 Vision 与 CoreGraphics 上，
+补的正是上面那层的盲区——"真实截图 OCR 出来的布局，喂给规则能不能用"。
+每个用例都从渲染出的像素开始、到渲染出的像素结束：
+
+- 打码：中文标签的手机号能被 OCR 读出并带上下文依据识别；银行卡与身份证过校验位；
+  校验位错的号码**不**被当成身份证（这是订单号不被误打码的原因）；
+  遮盖后重新 OCR 读不回原值；字符级保留确实只留前 3 后 4；
+  导出前审计在已遮盖图上判净、在未遮盖图上判漏。
+- 拼接：灰度桥接；重叠确实被去掉；渲染尺寸与规划一致；
+  拼接结果里每一行恰好出现一次且顺序正确（错误的重叠会表现为重复或缺行）；
+  手动网格四张都落下；横向拼接恢复出的宽度等于原图宽度。
+
+### CI
+
+`.github/workflows/core-tests.yml` 在 Linux 容器里跑核心包。
+
+`.github/workflows/ios-build.yml` 在 macOS runner 上做真机之外能做的全部事情：
+按模拟器编 Debug、跑上面 15 个用例、安装并启动 App 确认首屏不崩（崩了就抓崩溃报告）、
+按真机归档 Release、打包成未签名 IPA 上传成 artifact，
+最后校验成品 bundle 里的相册权限文案、两种语言的本地化和资源目录都在。
+启动后的首屏截图也作为 artifact 上传。
+
+签名需要证书，CI 里没有，所以 IPA 是未签名的——装真机仍需自己签。
 
 ## 已知限制
 
