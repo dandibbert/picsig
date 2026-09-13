@@ -208,9 +208,9 @@ extension StudioSession {
         }
     }
 
-    /// `MediaWorker.stitch` deliberately preserves the first header and last footer for manual workflows.
-    /// Quick long-screenshot mode is different: when the same fixed strip was detected on adjacent screenshots,
-    /// remove that outer copy too so browser/status/tool bars do not survive in the final scrollshot.
+    /// Manual stitching keeps the first header and final footer so a user never loses content silently.
+    /// Quick long-screenshot mode removes those outer copies once the same fixed strip has been detected
+    /// on adjacent screenshots. Preserve the overlap in *pixels* when the last crop gets shorter.
     private func cleanDetectedOuterBars() {
         guard project.images.count >= 2 else { return }
         let images = project.images
@@ -249,7 +249,10 @@ extension StudioSession {
                 let current = source.automaticCrop ?? source.crop
                 let maxY = min(current.maxY, source.crop.maxY - bottomPixels / max(1, source.size.height))
                 if maxY - current.y > 0.01 {
-                    source.automaticCrop = Box(current.x, current.y, current.width, maxY - current.y).intersection(.unit)
+                    let newCrop = Box(current.x, current.y, current.width, maxY - current.y).intersection(.unit)
+                    let overlapPixels = source.leadingCut * current.height * source.size.height
+                    source.automaticCrop = newCrop
+                    source.leadingCut = min(0.95, overlapPixels / max(1, newCrop.height * source.size.height))
                     project.images[index] = source
                 }
             }
