@@ -1,0 +1,83 @@
+name: Astra iOS · Test & IPA
+on:
+  push:
+    branches: [astra/picsig-ios-privacy-studio]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: astra-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    if: github.ref == 'refs/heads/astra/picsig-ios-privacy-studio'
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain & reproducible project
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          swift --version
+          python3 scripts/generate_project.py
+          git diff --exit-code -- PicSig.xcodeproj
+          plutil -lint App/Resources/Info.plist App/Resources/PrivacyInfo.xcprivacy PicSig.xcodeproj/project.pbxproj
+      - name: Core regression tests
+        run: swift test
+      - name: Select simulator
+        run: |
+          set -euo pipefail
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in sorted(d.items(),reverse=True) if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          echo "SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl status_bar "$DEVICE" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+      - name: iOS image regression tests
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild test -project PicSig.xcodeproj -scheme PicSig -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -resultBundlePath build/ImageTests.xcresult -only-testing:PicSigAppTests CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/image-tests.log
+      - name: UI smoke tests & screenshots
+        run: |
+          set -euo pipefail
+          xcodebuild test -project PicSig.xcodeproj -scheme PicSig -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -resultBundlePath build/UITests.xcresult -only-testing:PicSigUITests CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/ui-tests.log
+      - name: Archive iPhone application
+        run: |
+          set -euo pipefail
+          xcodebuild archive -project PicSig.xcodeproj -scheme PicSig -configuration Release -destination 'generic/platform=iOS' -archivePath build/PicSig.xcarchive -derivedDataPath build/ReleaseDerivedData CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/archive.log
+          mkdir -p build/package/Payload
+          cp -R build/PicSig.xcarchive/Products/Applications/PicSig.app build/package/Payload/
+          (cd build/package && /usr/bin/zip -qry ../PicSig-Astra-unsigned.ipa Payload)
+          shasum -a 256 build/PicSig-Astra-unsigned.ipa > build/SHA256SUMS.txt
+          echo 'Unsigned IPA. Sign with your own iOS certificate/installer before use. Bundle ID: com.dandibbert.picsig.astra. Main was not modified.' > build/INSTALL.txt
+      - name: Export test screenshots
+        if: always()
+        run: |
+          mkdir -p build/screenshots
+          if [ -d build/UITests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/UITests.xcresult --output-path build/screenshots || true
+          fi
+          if [ -n "${SIMULATOR_ID:-}" ]; then
+            xcrun simctl io "$SIMULATOR_ID" screenshot build/screenshots/last-state.png || true
+          fi
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicSig-Astra-unsigned-IPA
+          if-no-files-found: error
+          path: |
+            build/PicSig-Astra-unsigned.ipa
+            build/SHA256SUMS.txt
+            build/INSTALL.txt
+      - name: Upload tests & screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicSig-Astra-test-results
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/*.log
+            build/*.xcresult
+            build/screenshots/
