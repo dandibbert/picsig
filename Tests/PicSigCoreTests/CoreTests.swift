@@ -177,4 +177,97 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(insets.top, 20)
         XCTAssertEqual(insets.bottom, 15)
     }
+
+    private func textPage(offset: Int, height: Int, salt: Int = 0) throws -> GrayRaster {
+        let width = 96
+        var pixels = [UInt8](repeating: 250, count: width * height)
+        for y in 0..<height {
+            let row = y + offset, line = row / 47, glyphY = row % 47
+            guard glyphY >= 9, glyphY < 23 else { continue }
+            for x in 9..<87 {
+                let char = x / 5, gx = x % 5
+                let seed = (line + 1) &* 73856093 ^ (char + salt) &* 19349663
+                if gx < 3, ((seed >> ((glyphY + gx) % 17)) & 1) == 1 {
+                    pixels[y * width + x] = 50
+                }
+            }
+        }
+        return try GrayRaster(width: width, height: height, pixels: pixels)
+    }
+    func testSparseWhiteTextScreenshotsWithShortAndLongOverlap() throws {
+        let a = try textPage(offset: 0, height: 1600)
+        for offset in [83, 499, 1217, 1490] {
+            let b = try textPage(offset: offset, height: 1600)
+            XCTAssertEqual(OverlapDetector.match(a, b)?.rows, 1600 - offset, "Scroll offset \(offset)")
+        }
+    }
+    func testDifferentWhiteTextPagesNeverDiscardContent() throws {
+        XCTAssertNil(OverlapDetector.match(try textPage(offset: 0, height: 1300), try textPage(offset: 2000, height: 1300, salt: 791)))
+    }
+    func testViewportMatchSurvivesDifferentBrowserHeaderHeights() throws {
+        let aBody = try textPage(offset: 0, height: 1400)
+        let bBody = try textPage(offset: 620, height: 1460)
+        let a = try GrayRaster(width: 96, height: 1600, pixels: [UInt8](repeating: 210, count: 96 * 100) + aBody.pixels + [UInt8](repeating: 230, count: 96 * 100))
+        let b = try GrayRaster(width: 96, height: 1600, pixels: [UInt8](repeating: 216, count: 96 * 40) + bBody.pixels + [UInt8](repeating: 235, count: 96 * 100))
+        XCTAssertEqual(OverlapDetector.viewportMatch(a, b)?.rows, 920)
+    }
+
+    func testAddressesWithoutArabicDigitsAndWrappedBlocks() {
+        for text in ["上海市浦东新区", "幸福花园三期六幢二单元八零二室", "北京市朝阳区望京街道", "臺北市信義區松仁路一百號", "東京都新宿区西新宿2-8-1", "123 Market St."] {
+            XCTAssertTrue(AddressDetector.isAddress(text), text)
+        }
+        let lines = [
+            AddressDetector.Line("收货地址", Box(10, 10, 100, 20)),
+            AddressDetector.Line("上海市浦东新区", Box(160, 10, 180, 20)),
+            AddressDetector.Line("张江镇祖冲之路", Box(160, 40, 180, 20)),
+            AddressDetector.Line("幸福花园六幢二单元", Box(160, 70, 180, 20)),
+            AddressDetector.Line("802室", Box(160, 100, 70, 20)),
+            AddressDetector.Line("备注：放在门口", Box(160, 130, 180, 20)),
+            AddressDetector.Line("商品：儿童画册", Box(160, 200, 180, 20))
+        ]
+        XCTAssertEqual(AddressDetector.protectedLines(lines), Set([0, 1, 2, 3, 4]))
+    }
+    func testLastAddressLabelAndSeparateCardsDoNotCrashOrSwallowOtherFields() {
+        let lines = [AddressDetector.Line("电话：13800138000", Box(10, 10, 200, 20)), AddressDetector.Line("地址", Box(10, 200, 60, 20))]
+        XCTAssertEqual(AddressDetector.protectedLines(lines), [1])
+        XCTAssertFalse(AddressDetector.isAddress("产品型号 A1234，版本 2.0"))
+        XCTAssertFalse(AddressDetector.isAddress("今天走这条道路很开心"))
+    }
+
+    func testLayoutChangesKeepMasksAndAnnotationsAttachedToSource() throws {
+        var p = project()
+        p.edit.masks = [PrivacyMask(rect: Box(0.1, 0.6, 0.3, 0.05), kind: .manual)]
+        p.edit.annotations = [Annotation(kind: .text, points: [Point2D(0.2, 0.7)], text: "Editable")]
+        let old = try Composition.build(p)
+        p.images.reverse()
+        let new = try Composition.build(p)
+        let result = EditRemapper.remap(p.edit, from: old, to: new)
+        XCTAssertEqual(result.masks.count, 1)
+        XCTAssertEqual(result.masks[0].rect.y, 0.1, accuracy: 0.000001)
+        XCTAssertEqual(result.annotations[0].points[0].y, 0.2, accuracy: 0.000001)
+        XCTAssertEqual(result.annotations[0].id, p.edit.annotations[0].id)
+        XCTAssertEqual(result.annotations[0].text, "Editable")
+    }
+    func testSeamCrossingMaskSplitsRatherThanExposingSourcePixels() throws {
+        var p = project(); let old = try Composition.build(p)
+        p.edit.masks = [PrivacyMask(rect: Box(0.2, 0.45, 0.5, 0.1), kind: .manual)]
+        p.layout.gap = 100
+        let result = EditRemapper.remap(p.edit, from: old, to: try Composition.build(p))
+        XCTAssertEqual(result.masks.count, 2)
+        XCTAssertNotEqual(result.masks[0].id, result.masks[1].id)
+        XCTAssertEqual(result.masks[0].groupID, result.masks[1].groupID)
+    }
+    func testRenderedFontParagraphsLargeAndShortOverlap() throws {
+        let folder = try XCTUnwrap(Bundle.module.resourceURL).appendingPathComponent("Fixtures")
+        let data = [UInt8](try Data(contentsOf: folder.appendingPathComponent("paragraph-page.gray")))
+        XCTAssertEqual(data.count, 96 * 2800)
+        func viewport(_ offset: Int) throws -> GrayRaster {
+            try GrayRaster(width: 96, height: 1100, pixels: Array(data[offset * 96..<(offset + 1100) * 96]))
+        }
+        for advance in [73, 420, 660, 841, 946, 1011] {
+            let match = try XCTUnwrap(OverlapDetector.match(viewport(0), viewport(advance)), "Advance \(advance)")
+            XCTAssertEqual(match.rows, 1100 - advance, "Rendered text has an exact pixel translation")
+            XCTAssertFalse(match.duplicate)
+        }
+    }
 }

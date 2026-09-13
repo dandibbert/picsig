@@ -66,6 +66,7 @@ enum StudioStage { case compose, edit }
     @Published var note: String?
     @Published var notice: Notice?
     @Published var selectedMask: UUID?
+    @Published var selectedAnnotation: UUID?
     @Published var exportResult: ExportResult?
     @Published var showExport = false
     @Published private(set) var undoCount = 0
@@ -89,21 +90,27 @@ enum StudioStage { case compose, edit }
     }
     func change(_ body: (inout Project) -> Void, layout: Bool = false, coalesce: Bool = false) {
         guard !busy else { return }
+        let oldComposition = layout ? composition : nil
         checkpoint(coalesce: coalesce); body(&project)
         project.updatedAt = Date()
-        if layout { project.edit = EditState(); selectedMask = nil; refreshPreview() }
+        if layout {
+            if let oldComposition, let newComposition = composition {
+                project.edit = EditRemapper.remap(project.edit, from: oldComposition, to: newComposition)
+            }
+            selectedMask = nil; selectedAnnotation = nil; refreshPreview()
+        }
         persist()
     }
     func undo() {
         guard !busy, var old = history.popLast() else { return }
         future.append(project); old.updatedAt = Date(); project = old
-        undoCount = history.count; redoCount = future.count; selectedMask = nil
+        undoCount = history.count; redoCount = future.count; selectedMask = nil; selectedAnnotation = nil
         persist(); refreshPreview()
     }
     func redo() {
         guard !busy, var next = future.popLast() else { return }
         history.append(project); next.updatedAt = Date(); project = next
-        undoCount = history.count; redoCount = future.count; selectedMask = nil
+        undoCount = history.count; redoCount = future.count; selectedMask = nil; selectedAnnotation = nil
         persist(); refreshPreview()
     }
     func persist() {
@@ -194,7 +201,9 @@ enum StudioStage { case compose, edit }
         run("自动拼接") { [self] progress in
             let report = try await MediaWorker.shared.stitch(original, trimBars: trimBars, progress: progress)
             checkpoint(); project = report.project; refreshPreview()
-            note = "已跳过 \(report.duplicates) 张重复图；\(report.uncertain) 处未可靠匹配，已保留完整内容。"
+            note = report.uncertain == 0
+                ? "已自动拼接，并清理检测到的固定状态栏 / 地址栏 / 工具栏。"
+                : "有 \(report.uncertain) 处未能匹配，请调整接缝；未匹配处保留完整内容。"
         }
     }
     func rotateSource(_ id: UUID) {
@@ -210,17 +219,20 @@ enum StudioStage { case compose, edit }
     func enterEditor() {
         guard !project.images.isEmpty else { return }
         stage = .edit
-        if !project.edit.scanFinished && project.edit.masks.isEmpty { scan() }
+        refreshPreview()
     }
     func scan() {
         let snapshot = project
         run("本机隐私识别") { [self] progress in
             let report = try await MediaWorker.shared.scan(snapshot, progress: progress)
             checkpoint()
-            project.edit.masks = project.edit.masks.filter { $0.kind == .manual } + report.masks
+            let preserved = project.edit.masks.filter { $0.kind == .manual || $0.reviewed }
+            project.edit.masks = preserved + report.masks.filter { newMask in
+                !preserved.contains { $0.rect.intersection(newMask.rect).area / max(0.0000001, newMask.rect.area) > 0.55 }
+            }
             project.edit.scanFinished = report.warnings.isEmpty; project.edit.scanWarnings = report.warnings
             project.updatedAt = Date(); selectedMask = nil; persist()
-            note = "已检查 \(report.textLines) 个文字区域，标记 \(report.masks.count) 处。自动识别仍可能遗漏，请逐处复核。"
+            note = "已检查 \(report.textLines) 个文字区域，标记 \(report.masks.count) 处。可直接点选遮挡修改，遗漏处可用点字或框选补充。"
             if !report.warnings.isEmpty { notice = Notice(title: "识别未完全完成", message: report.warnings.joined(separator: "\n")) }
         }
     }
@@ -244,7 +256,7 @@ enum StudioStage { case compose, edit }
     }
     func export(sliced: Bool, jpeg: Bool, audit: Bool) {
         let snapshot = project
-        run("导出前隐私复检") { [self] progress in
+        run(audit ? "导出前隐私复检" : "正在导出图片") { [self] progress in
             if audit {
                 let report = try await MediaWorker.shared.scan(snapshot, redacted: true, progress: progress)
                 guard report.warnings.isEmpty else { throw PicSigError.storage("导出复检未完成。请重试，或在人工检查后关闭复检再导出。") }

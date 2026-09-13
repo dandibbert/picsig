@@ -77,7 +77,7 @@ struct HomeView: View {
 
                     HStack(spacing: 10) {
                         Image(systemName: "lock.shield").foregroundStyle(Color.picMint)
-                        Text("拼接、OCR 和隐私识别都在本机完成。自动打码仍需在导出前复核。")
+                        Text("图片处理全部在本机完成，不上传照片。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.top, 4)
@@ -193,7 +193,7 @@ extension StudioSession {
                 self.autoStitch(trimBars: true)
                 await self.waitForQuickWork()
                 guard !Task.isCancelled else { return }
-                self.cleanDetectedOuterBars()
+
             }
 
             if finishInEditor {
@@ -208,64 +208,4 @@ extension StudioSession {
         }
     }
 
-    /// Manual stitching keeps the first header and final footer so a user never loses content silently.
-    /// Quick long-screenshot mode removes those outer copies once the same fixed strip has been detected
-    /// on adjacent screenshots. Preserve the overlap in *pixels* when the last crop gets shorter.
-    private func cleanDetectedOuterBars() {
-        guard project.images.count >= 2 else { return }
-        let images = project.images
-        let referenceHeight = median(images.map(\.size.height))
-
-        let topCandidates = images.dropFirst().compactMap { source -> Double? in
-            guard let automatic = source.automaticCrop else { return nil }
-            let pixels = max(0, (automatic.y - source.crop.y) * source.size.height)
-            return pixels >= 8 && pixels <= referenceHeight * 0.22 ? pixels : nil
-        }
-        let bottomCandidates = images.dropLast().compactMap { source -> Double? in
-            guard let automatic = source.automaticCrop else { return nil }
-            let pixels = max(0, (source.crop.maxY - automatic.maxY) * source.size.height)
-            return pixels >= 8 && pixels <= referenceHeight * 0.22 ? pixels : nil
-        }
-        let topPixels = median(topCandidates)
-        let bottomPixels = median(bottomCandidates)
-        guard topPixels > 0 || bottomPixels > 0 else {
-            note = "已自动拼接。若某个拼接点不准，点左上角「拼接」逐处微调。"
-            return
-        }
-
-        change { project in
-            if topPixels > 0, !project.images.isEmpty {
-                var source = project.images[0]
-                let current = source.automaticCrop ?? source.crop
-                let y = max(current.y, source.crop.y + topPixels / max(1, source.size.height))
-                if current.maxY - y > 0.01 {
-                    source.automaticCrop = Box(current.x, y, current.width, current.maxY - y).intersection(.unit)
-                    project.images[0] = source
-                }
-            }
-            if bottomPixels > 0, !project.images.isEmpty {
-                let index = project.images.count - 1
-                var source = project.images[index]
-                let current = source.automaticCrop ?? source.crop
-                let maxY = min(current.maxY, source.crop.maxY - bottomPixels / max(1, source.size.height))
-                if maxY - current.y > 0.01 {
-                    let newCrop = Box(current.x, current.y, current.width, maxY - current.y).intersection(.unit)
-                    let overlapPixels = source.leadingCut * current.height * source.size.height
-                    source.automaticCrop = newCrop
-                    source.leadingCut = min(0.95, overlapPixels / max(1, newCrop.height * source.size.height))
-                    project.images[index] = source
-                }
-            }
-        }
-        refreshPreview()
-        note = "已自动拼接，并清理检测到的固定状态栏 / 地址栏 / 工具栏。需要时可返回「拼接」微调。"
-    }
-
-    private func median(_ values: [Double]) -> Double {
-        guard !values.isEmpty else { return 0 }
-        let sorted = values.sorted()
-        let middle = sorted.count / 2
-        if sorted.count.isMultiple(of: 2) { return (sorted[middle - 1] + sorted[middle]) / 2 }
-        return sorted[middle]
-    }
 }

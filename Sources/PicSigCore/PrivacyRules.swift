@@ -82,3 +82,86 @@ public enum PrivacyRules {
         return segments.count == 4 && segments.allSatisfy { Int($0).map { (0...255).contains($0) } ?? false }
     }
 }
+
+/// Geometry-aware address blocks. This is deliberately independent of Vision so that mixed
+/// scripts, missing digits, label/value columns and wrapped lines can be regression-tested.
+public enum AddressDetector {
+    public struct Line: Sendable {
+        public var text: String
+        public var rect: Box
+        public init(_ text: String, _ rect: Box) { self.text = text; self.rect = rect }
+    }
+    private static let labels = ["地址", "住址", "住所", "所在地", "address", "shipping to", "deliver to"]
+    private static let streets = ["路", "街", "巷", "弄", "胡同", "村", "镇", "鎮", "乡", "鄉", "丁目", "町", "小区", "小區", "花园", "花園", "公寓", "大厦", "大廈", "苑", "园", "園", "里", "新城", "广场", "廣場"]
+    private static let units = ["号", "號", "栋", "棟", "幢", "单元", "單元", "室", "楼", "樓", "座", "层", "層", "番地", "番", "apt", "suite", "unit", "floor", "building"]
+    private static let numbers = "[0-9０-９一二三四五六七八九十百零〇两兩壹贰叁肆伍陆柒捌玖]"
+    private static func matches(_ pattern: String, _ text: String) -> Bool {
+        text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+    private static func compact(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression).lowercased()
+    }
+    public static func isLabel(_ text: String) -> Bool {
+        let value = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return labels.contains { value.contains($0) }
+    }
+    public static func isAddress(_ text: String) -> Bool {
+        let value = compact(text)
+        guard value.count >= 4, value.count <= 260 else { return false }
+        if isLabel(text), value.count > 5 { return true }
+        let administrative = matches("[\\p{Han}]{2,}(省|市|区|區|县|縣|自治区|自治區|都|道|府|県)[\\p{Han}]{1,}(市|区|區|县|縣|町|村|镇|鎮)", value)
+        let hasStreet = streets.contains(where: value.contains)
+        let hasUnit = units.contains(where: value.contains)
+        let hasNumber = matches(numbers, value)
+        if administrative { return true }
+        if hasStreet && hasUnit && hasNumber { return true }
+        if hasStreet && matches("[\\p{Han}]{2,}(花园|花園|公寓|小区|小區|大厦|大廈|新村|家园|家園)", value) { return true }
+        if matches("^[A-Za-z]?" + numbers + "+(号楼|號樓|栋|棟|幢|单元|單元|座).+" + numbers, value) { return true }
+        if matches("[都道府県市区町村].*" + numbers + "+[-ー－]" + numbers + "+[-ー－]" + numbers, value) { return true }
+        // Latin street suffixes and apartment lines (including abbreviated addresses).
+        if matches("\\b[0-9]+[A-Za-z-]*\\s+.+\\b(street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr|court|ct|place|pl|way|highway|hwy|terrace|ter|crescent|close)\\b", text) { return true }
+        return false
+    }
+    private static func otherField(_ text: String) -> Bool {
+        matches("^(电话|電話|手机|手機|姓名|收件人|联系人|聯繫人|订单|訂單|支付|金额|金額|备注|備註|商品|合计|合計|总计|總計|email|phone|name|order|total|payment|note)\\s*[:：]", text.trimmingCharacters(in: .whitespaces))
+    }
+    private static func continuation(_ text: String) -> Bool {
+        let value = compact(text)
+        return isAddress(text) || streets.contains(where: value.contains) || units.contains(where: value.contains)
+            || matches("^[A-Za-z]?" + numbers + "+([-—－/栋棟幢室号號楼樓座层層单元單元]" + numbers + "+)*[室号號楼樓]?$", value)
+            || matches("^[A-Za-z .]+,?\\s+[A-Z]{2}\\s+[0-9]{5}(-[0-9]{4})?$", text)
+            || matches("^〒?\\s*[0-9]{3}-[0-9]{4}", text)
+    }
+    public static func protectedLines(_ lines: [Line]) -> Set<Int> {
+        let ordered = lines.indices.sorted {
+            let a = lines[$0].rect, b = lines[$1].rect
+            return abs(a.y - b.y) < min(a.height, b.height) * 0.45 ? a.x < b.x : a.y < b.y
+        }
+        var result = Set<Int>()
+        for seed in ordered {
+            let first = lines[seed]
+            guard isAddress(first.text) || isLabel(first.text) else { continue }
+            result.insert(seed)
+            var frontier = first.rect
+            var previousText = first.text
+            var followed = 0
+            for index in ordered where index != seed {
+                let next = lines[index], r = next.rect
+                let lineHeight = max(frontier.height, r.height)
+                let sameRow = abs(r.y - frontier.y) < lineHeight * 0.55
+                let beside = sameRow && r.x >= frontier.maxX - 2 && r.x - frontier.maxX <= max(240, lineHeight * 8)
+                let below = r.y >= frontier.maxY - lineHeight * 0.2 && r.y - frontier.maxY <= max(64, lineHeight * 2.8)
+                    && abs(r.x - frontier.x) <= max(64, lineHeight * 3)
+                guard beside || below else { continue }
+                guard followed < 5, !otherField(next.text), next.text.count >= 2, next.text.count <= 200 else { continue }
+                // A label can have a value in a separate column/line. Subsequent continuations
+                // need address evidence, preventing a block from swallowing the next form field.
+                let isValue = isLabel(previousText) && followed == 0
+                guard isValue || continuation(next.text) || (continuation(previousText) && isAddress(previousText + next.text)) else { continue }
+                result.insert(index); followed += 1
+                frontier = r; previousText = next.text
+            }
+        }
+        return result
+    }
+}

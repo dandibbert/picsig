@@ -1,82 +1,107 @@
 import SwiftUI
 
+private struct TextIndexKey: Hashable {
+    var enabled: Bool
+    var images: [SourceImage]
+    var layout: LayoutOptions
+}
+
 struct EditorView: View {
     @ObservedObject var session: StudioSession
-    @Environment(\.scenePhase) private var phase
+    @Environment(\.dismiss) private var dismiss
     @State private var tool: CanvasTool = .navigate
-    @State private var reveal = false
-    @State private var review = false
-    @State private var textRedaction = false
     @State private var settings = false
-    @State private var rescan = false
-    @State private var textPoint: Point2D?
-    @State private var text = ""
+    @State private var textDraft: Annotation?
     @State private var color = "coral"
     @State private var lineWidth = 8.0
+    @State private var textRegions: [RecognizedTextItem] = []
+    @State private var indexedImages: [SourceImage] = []
+    @State private var indexedLayout: LayoutOptions?
+    @State private var indexing = false
+    @State private var indexError: String?
+    private var selectedMark: Annotation? { session.project.edit.annotations.first { $0.id == session.selectedAnnotation } }
+    private var textIndexKey: TextIndexKey { TextIndexKey(enabled: tool == .textMask, images: session.project.images, layout: session.project.layout) }
     var body: some View {
         VStack(spacing: 0) {
-            statusBar
+            if session.project.images.contains(where: { $0.matchConfidence == 0 }) {
+                Button { session.stage = .compose } label: {
+                    Label("有接缝未匹配，点此调整", systemImage: "exclamationmark.triangle")
+                        .font(.caption).padding(10).frame(maxWidth: .infinity)
+                }.foregroundStyle(.orange).background(Color.orange.opacity(0.08))
+            }
             if let image = session.preview, let canvas = session.composition?.size {
                 ZoomCanvas(image: image, canvas: canvas, edit: session.project.edit, tool: tool,
-                           selected: session.selectedMask, reveal: reveal, color: color, lineWidth: lineWidth,
+                           selected: session.selectedMask, selectedAnnotation: session.selectedAnnotation,
+                           textRegions: textRegions, color: color, lineWidth: lineWidth,
                            detail: session.detail, action: handle, requestDetail: session.requestDetail)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier("editor-canvas")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { ProgressView("正在准备画布…").frame(maxWidth: .infinity, maxHeight: .infinity) }
-            VStack(spacing: 12) {
-                HStack(spacing: 14) {
-                    Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 34, height: 34) }.disabled(session.undoCount == 0).accessibilityLabel("撤销")
-                    Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 34, height: 34) }.disabled(session.redoCount == 0).accessibilityLabel("重做")
-                    Spacer(minLength: 4)
-                    Text("按住查看原图").font(.caption).foregroundStyle(reveal ? Color.orange : Color.secondary)
-                        .padding(.horizontal, 12).frame(height: 34).background(Color.primary.opacity(0.05), in: Capsule())
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { _ in reveal = true }.onEnded { _ in reveal = false })
-                        .accessibilityLabel("按住查看未遮挡原图，松开恢复")
-                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3").frame(width: 34, height: 34) }.accessibilityLabel("识别规则")
+            VStack(spacing: 8) {
+                if let mask = session.mask, tool != .textMask { maskInspector(mask) }
+                else if let mark = selectedMark { markInspector(mark) }
+                else if [.pen, .arrow, .rectangle].contains(tool) {
+                    HStack { swatches(color: $color); Slider(value: $lineWidth, in: 2...24).accessibilityLabel("线条粗细") }
+                } else if tool == .crop {
+                    HStack {
+                        Text("拖动画框；拖动四角修改裁剪").font(.caption).foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        Button("还原") { session.change { $0.edit.crop = .unit } }.fixedSize()
+                        Button { session.change { $0.edit.quarterTurns = ($0.edit.quarterTurns + 1) % 4 } } label: { Image(systemName: "rotate.right").frame(width: 36, height: 36) }.accessibilityLabel("旋转90度")
+                    }
+                }
+                HStack(spacing: 8) {
+                    if indexing { ProgressView().controlSize(.small) }
+                    Text(hint).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer(minLength: 6)
+                    Button { session.scan() } label: {
+                        Label("智能打码", systemImage: "sparkles").font(.caption.weight(.semibold)).fixedSize()
+                    }.buttonStyle(.bordered).accessibilityIdentifier("scan-privacy")
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(CanvasTool.allCases, id: \.self) { item in
-                            Button { tool = item; reveal = false } label: {
-                                VStack(spacing: 6) { Image(systemName: item.symbol).font(.system(size: 19)); Text(item.title).font(.caption2) }
-                                    .frame(width: 55, height: 57).background(tool == item ? Color.picAccent.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 13))
-                                    .foregroundStyle(tool == item ? Color.picAccent : Color.secondary)
-                            }.buttonStyle(.plain).accessibilityIdentifier("tool-\(item.rawValue)")
+                    HStack(spacing: 4) {
+                        ForEach(CanvasTool.toolbar, id: \.self) { item in
+                            Button {
+                                tool = item; session.selectedMask = nil; session.selectedAnnotation = nil
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Image(systemName: item.symbol).font(.system(size: 20))
+                                    Text(item.title).font(.system(size: 11, weight: .medium)).lineLimit(1).fixedSize()
+                                }.frame(width: 68, height: 54)
+                                    .foregroundStyle(tool == item ? Color.picAccent : Color.primary)
+                                    .background(tool == item ? Color.picAccent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                            }.buttonStyle(.plain).accessibilityIdentifier(item == .textMask ? "text-redaction" : "tool-\(item.rawValue)")
                         }
                     }
                 }
-                if let mask = session.mask { maskInspector(mask) }
-                else if [.pen, .arrow, .rectangle, .text].contains(tool) { markControls }
-                else if tool == .crop { cropControls }
-                else { Text(tool == .navigate ? "点击遮挡区域可复核 · 双指缩放" : "单指操作 · 双指平移与缩放").font(.caption2).foregroundStyle(.secondary) }
-                HStack(spacing: 8) {
-                    Button { textRedaction = true } label: {
-                        Label("文字", systemImage: "text.viewfinder").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("text-redaction")
-                    Button { if session.project.edit.masks.isEmpty { session.scan() } else { rescan = true } } label: {
-                        Label("智能", systemImage: "sparkles").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("scan-privacy")
-                    Button { review = true } label: {
-                        Label("复核 \(session.project.edit.masks.count)", systemImage: "checklist").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("review-masks")
-                }.controlSize(.large)
-            }.padding(.horizontal, 16).padding(.vertical, 12).background(.regularMaterial)
+                Text("\(session.activeMasks) 处打码 · \(session.project.edit.annotations.count) 个标注")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityIdentifier("selection-count")
+            }.padding(.horizontal, 12).padding(.vertical, 8).background(.regularMaterial)
         }.background(Color.picCanvas).disabled(session.busy)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("导出") { reveal = false; session.exportResult = nil; session.showExport = true }.fontWeight(.semibold).disabled(session.busy).accessibilityIdentifier("open-export")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(session.undoCount == 0 || session.busy).accessibilityLabel("撤销")
+                Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(session.redoCount == 0 || session.busy).accessibilityLabel("重做")
+                Menu {
+                    Button("打码规则") { settings = true }
+                    Button("保存并关闭") {
+                        Task {
+                            do { try await session.flush(); dismiss() }
+                            catch { session.notice = Notice(title: "保存失败", message: error.localizedDescription) }
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("更多")
+                Button("导出") { session.exportResult = nil; session.showExport = true }
+                    .fontWeight(.semibold).fixedSize().disabled(session.busy).accessibilityIdentifier("open-export")
             }
         }
-        .sheet(isPresented: $textRedaction) {
-            TextRedactionView(session: session)
-        }
-        .sheet(isPresented: $review) {
-            MaskReviewView(session: session) { id in session.selectedMask = id; tool = .adjust; review = false }
+        .sheet(item: $textDraft) { draft in
+            TextAnnotationSheet(annotation: draft) { updated in
+                session.change { p in
+                    if let i = p.edit.annotations.firstIndex(where: { $0.id == updated.id }) { p.edit.annotations[i] = updated }
+                    else { p.edit.annotations.append(updated) }
+                }
+                session.selectedAnnotation = updated.id; session.selectedMask = nil; tool = .navigate
+            }
         }
         .sheet(isPresented: $settings) {
             NavigationStack {
@@ -84,152 +109,140 @@ struct EditorView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { settings = false } } }
             }
         }
-        .confirmationDialog("重新识别隐私？", isPresented: $rescan, titleVisibility: .visible) {
-            Button("重新识别，保留手动画框") { session.scan() }
-        } message: { Text("将替换自动识别的标记及其复核状态，不删除手动添加的遮挡。旧状态可撤销。") }
-        .alert("添加文字", isPresented: Binding(get: { textPoint != nil }, set: { if !$0 { textPoint = nil; text = "" } })) {
-            TextField("输入标注文字", text: $text)
-            Button("取消", role: .cancel) { textPoint = nil; text = "" }
-            Button("添加") {
-                if let point = textPoint, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let mark = Annotation(kind: .text, points: [point], text: String(text.prefix(300)), width: lineWidth, color: color)
-                    session.change { $0.edit.annotations.append(mark) }
-                }
-                textPoint = nil; text = ""
-            }
+        .task(id: textIndexKey) {
+            guard tool == .textMask else { indexing = false; return }
+            guard indexedImages != session.project.images || indexedLayout != session.project.layout else { return }
+            let snapshot = session.project
+            indexing = true; indexError = nil; textRegions = []
+            do {
+                let result = try await MediaWorker.shared.recognizedText(snapshot)
+                try Task.checkCancellation()
+                textRegions = result; indexedImages = snapshot.images; indexedLayout = snapshot.layout; indexing = false
+            } catch is CancellationError {} catch { indexing = false; indexError = "未能定位文字，可切换框选打码" }
         }
         .onChange(of: session.busy) { oldValue, newValue in
-            if oldValue, !newValue, session.preview == nil {
-                session.refreshPreview()
-            }
+            if oldValue && !newValue && session.preview == nil { session.refreshPreview() }
         }
-        .onChange(of: phase) { _, value in if value != .active { reveal = false } }
-        .onDisappear { reveal = false }
     }
-    private var statusBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: session.project.edit.scanFinished ? "shield.lefthalf.filled" : "shield").foregroundStyle(session.project.edit.scanFinished ? Color.picMint : Color.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(session.project.edit.scanFinished ? "\(session.activeMasks) 处已遮挡 · 分享前请复核" : "隐私检查尚未完成").font(.caption.weight(.semibold))
-                Text("自动识别可能遗漏，也可用「文字」直接点选 OCR 结果打码。").font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 4)
-            if session.project.edit.quarterTurns != 0 { Text("导出 ↻\(session.project.edit.quarterTurns * 90)°").font(.caption2).foregroundStyle(.secondary) }
-        }.padding(.horizontal, 18).padding(.vertical, 10).background(.background)
+    private var hint: String {
+        switch tool {
+        case .textMask: return indexing ? "正在定位图片上的文字…" : (indexError ?? "点图片上的文字打码，再点取消；单指滚动")
+        case .text: return "点图片上需要加字的位置；已有文字可双击修改"
+        case .crop: return "裁剪可随时修改，原图不会被删除"
+        case .navigate: return selectedMark != nil || session.mask != nil ? "拖动移动，四角缩放" : "点选标注可修改，双指缩放"
+        default: return "单指绘制，双指移动画布"
+        }
     }
     private func maskInspector(_ mask: PrivacyMask) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Label(mask.kind.title, systemImage: mask.kind.symbol).font(.caption.weight(.semibold))
-                Spacer()
-                Button { session.selectedMask = nil; tool = .navigate } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.accessibilityLabel("关闭遮挡调整")
-            }
-            HStack {
-                Toggle("遮挡", isOn: Binding(get: { mask.enabled }, set: { session.toggleMask(mask.id, enabled: $0) })).font(.caption).fixedSize()
-                Spacer()
-                Picker("遮挡样式", selection: Binding(get: { mask.style }, set: { style in session.change { project in if let i = project.edit.masks.firstIndex(where: { $0.id == mask.id }) { project.edit.masks[i].style = style } } })) {
-                    ForEach(MaskStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.labelsHidden().pickerStyle(.menu)
-                Menu {
-                    Button("遮挡所有相同内容") { session.toggleMask(mask.id, enabled: true, linked: true) }
-                    Button("保留所有相同内容", role: .destructive) { session.toggleMask(mask.id, enabled: false, linked: true) }
-                } label: { Text("关联 \(session.project.edit.masks.filter { $0.groupID == mask.groupID }.count) 处").font(.caption) }
-            }
-            HStack {
-                Button("扩边 +4 px") {
-                    guard let size = session.composition?.size else { return }
-                    session.adjustMask(mask.id, rect: mask.rect.expanded(dx: 4 / size.width, dy: 4 / size.height))
-                }
-                Spacer()
-                Button(mask.reviewed ? "已复核 ✓" : "标为已复核") { session.toggleMask(mask.id, enabled: mask.enabled) }
-                Button("拖动调框") { tool = .adjust }
-            }.font(.caption)
-            if tool == .adjust { Text("拖动框体移动位置；拖动四角调整大小。双指平移画布。").font(.caption2).foregroundStyle(.secondary) }
-        }.padding(12).background(Color.picAccent.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+        HStack(spacing: 10) {
+            Picker("遮挡样式", selection: Binding(get: { mask.style }, set: { value in session.change { p in if let i = p.edit.masks.firstIndex(where: { $0.id == mask.id }) { p.edit.masks[i].style = value; p.edit.masks[i].reviewed = true } } })) {
+                ForEach(MaskStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+            }.pickerStyle(.menu).labelsHidden()
+            Button("扩边") {
+                if let size = session.composition?.size { session.adjustMask(mask.id, rect: mask.rect.expanded(dx: 4 / size.width, dy: 4 / size.height)) }
+            }.fixedSize()
+            Spacer(minLength: 0)
+            Button(role: .destructive) { session.toggleMask(mask.id, enabled: false); session.selectedMask = nil } label: { Image(systemName: "trash").frame(width: 36, height: 36) }.accessibilityLabel("删除遮挡")
+            Button { session.selectedMask = nil } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }.accessibilityLabel("取消选择")
+        }.font(.caption)
     }
-    private var markControls: some View {
-        HStack(spacing: 13) {
-            ForEach(["coral", "violet", "mint", "ink"], id: \.self) { value in
-                Button { color = value } label: {
-                    Circle().fill(Color(uiColor: Renderer.markColor(value))).frame(width: 23, height: 23)
-                        .padding(4).overlay(Circle().stroke(color == value ? Color.primary : .clear, lineWidth: 1.5))
-                }.accessibilityLabel(["coral": "红色", "violet": "紫色", "mint": "青色", "ink": "黑色"][value] ?? value)
+    private func markInspector(_ mark: Annotation) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                swatches(color: Binding(get: { selectedMark?.color ?? mark.color }, set: { value in updateSelected { $0.color = value } }))
+                Spacer(minLength: 0)
+                if mark.kind == .text { Button("编辑文字") { textDraft = mark }.font(.caption).fixedSize().accessibilityIdentifier("edit-selected-text") }
+                Button(role: .destructive) {
+                    session.change { $0.edit.annotations.removeAll { $0.id == mark.id } }; session.selectedAnnotation = nil
+                } label: { Image(systemName: "trash").frame(width: 36, height: 36) }.accessibilityLabel("删除标注")
+                Button { session.selectedAnnotation = nil } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }.accessibilityLabel("取消选择")
             }
-            Slider(value: $lineWidth, in: 2...18, step: 1).accessibilityLabel(tool == .text ? "文字大小" : "线条粗细")
+            HStack {
+                Text(mark.kind == .text ? "字号" : "粗细").font(.caption).fixedSize()
+                Slider(value: Binding(get: { selectedMark?.width ?? mark.width }, set: { value in updateSelected { $0.width = value } }), in: mark.kind == .text ? 3.6...40 : 1...40)
+                Text("\(Int(mark.width * (mark.kind == .text ? 5 : 1)))").font(.caption.monospacedDigit()).frame(width: 32)
+            }
         }
     }
-    private var cropControls: some View {
-        HStack {
-            Text("画框选择导出范围").font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Button("还原") { session.change { $0.edit.crop = .unit } }.font(.caption)
-            Button { session.change { $0.edit.quarterTurns = ($0.edit.quarterTurns + 1) % 4 } } label: { Label("90°", systemImage: "rotate.right").font(.caption) }
+    private func updateSelected(_ body: (inout Annotation) -> Void) {
+        guard let id = session.selectedAnnotation else { return }
+        session.change({ p in if let i = p.edit.annotations.firstIndex(where: { $0.id == id }) { body(&p.edit.annotations[i]) } }, coalesce: true)
+    }
+    private func swatches(color: Binding<String>) -> some View {
+        HStack(spacing: 2) {
+            ForEach(["coral", "violet", "mint", "ink"], id: \.self) { value in
+                Button { color.wrappedValue = value } label: {
+                    Circle().fill(Color(uiColor: Renderer.markColor(value))).frame(width: 20, height: 20).padding(6)
+                        .overlay(Circle().stroke(color.wrappedValue == value ? Color.primary : .clear, lineWidth: 1))
+                }.buttonStyle(.plain).accessibilityLabel("标注颜色 \(value)")
+            }
         }
     }
     private func handle(_ action: CanvasAction) {
         switch action {
-        case .mask(let box): session.addMask(box); tool = .adjust
+        case .redactText(let item): session.toggleTextRedaction(item); session.selectedAnnotation = nil
+        case .mask(let box): session.addMask(box); session.selectedAnnotation = nil; tool = .navigate
         case .adjust(let id, let box): session.adjustMask(id, rect: box)
-        case .annotation(let annotation): session.change { $0.edit.annotations.append(annotation) }
+        case .annotation(let mark):
+            session.change { $0.edit.annotations.append(mark) }; session.selectedAnnotation = mark.id; session.selectedMask = nil; tool = .navigate
+        case .updateAnnotation(let mark): session.change { p in if let i = p.edit.annotations.firstIndex(where: { $0.id == mark.id }) { p.edit.annotations[i] = mark } }
         case .crop(let box): session.change { $0.edit.crop = box }
-        case .select(let id): session.selectedMask = id
-        case .text(let point): textPoint = point
+        case .select(let id): session.selectedMask = id; if id != nil { session.selectedAnnotation = nil; tool = .navigate }
+        case .selectAnnotation(let id): session.selectedAnnotation = id; if id != nil { session.selectedMask = nil; tool = .navigate }
+        case .text(let point): textDraft = Annotation(kind: .text, points: [point], width: 8, color: color)
+        case .editText(let id): textDraft = session.project.edit.annotations.first { $0.id == id }
         case .erase(let point):
-            if let mask = session.project.edit.masks.last(where: { $0.rect.contains(point) }) {
-                if mask.kind == .manual { session.change { $0.edit.masks.removeAll { $0.id == mask.id } } }
-                else { session.toggleMask(mask.id, enabled: false) }
-                session.selectedMask = nil
-            } else {
-                session.change { project in
-                    if let index = project.edit.annotations.lastIndex(where: { mark in
-                        let xs = mark.points.map(\.x), ys = mark.points.map(\.y)
-                        let box = Box(xs.min() ?? 0, ys.min() ?? 0, max(0.04, (xs.max() ?? 0) - (xs.min() ?? 0)), max(0.02, (ys.max() ?? 0) - (ys.min() ?? 0)))
-                        return box.expanded(dx: 0.025, dy: 0.01).contains(point)
-                    }) { project.edit.annotations.remove(at: index) }
-                }
+            if let mask = session.project.edit.masks.last(where: { $0.rect.contains(point) }) { session.toggleMask(mask.id, enabled: false) }
+            else if let size = session.composition?.size,
+                    let mark = session.project.edit.annotations.last(where: { Renderer.hitAnnotation($0, at: point, canvas: size, tolerance: Size2D(0.01, 0.005)) }) {
+                session.change { $0.edit.annotations.removeAll { $0.id == mark.id } }
             }
         }
     }
 }
 
-struct MaskReviewView: View {
-    @ObservedObject var session: StudioSession
-    var locate: (UUID) -> Void
+private struct TextAnnotationSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var filter = 0
-    private var visible: [PrivacyMask] { session.project.edit.masks.filter { filter == 0 || (filter == 1 ? !$0.reviewed : !$0.enabled) } }
+    @FocusState private var focused: Bool
+    @State var annotation: Annotation
+    var save: (Annotation) -> Void
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text("识别结果不是安全保证。请检查截图里的姓名、地址、头像和业务信息；遗漏的区域可用「文字」直接点选，或用「遮挡」手动画框。").font(.footnote).foregroundStyle(.secondary)
-                    Picker("筛选", selection: $filter) { Text("全部").tag(0); Text("待复核").tag(1); Text("已保留").tag(2) }.pickerStyle(.segmented)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                TextField("输入文字", text: $annotation.text, axis: .vertical)
+                    .font(.system(size: 22)).lineLimit(3...6).focused($focused)
+                    .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("annotation-text-input")
+                HStack {
+                    Text("字号").font(.subheadline)
+                    Slider(value: $annotation.width, in: 3.6...40)
+                    Text("\(Int(annotation.width * 5))").monospacedDigit().frame(width: 40)
                 }
-                if visible.isEmpty { ContentUnavailableView("没有对应标记", systemImage: "checklist", description: Text("这不表示图中没有敏感内容。可以返回画布继续人工检查。")) }
-                ForEach(visible) { mask in
-                    HStack(spacing: 14) {
-                        Button { locate(mask.id) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: mask.kind.symbol).foregroundStyle(Color.picAccent).frame(width: 26)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(mask.kind.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text("\(mask.reviewed ? "已复核" : "待复核") · \(Int(mask.confidence * 100))% 参考置信度").font(.caption2).foregroundStyle(.secondary)
-                                }
-                            }.frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 16) {
+                    ForEach(["coral", "violet", "mint", "ink"], id: \.self) { value in
+                        Button { annotation.color = value } label: {
+                            Circle().fill(Color(uiColor: Renderer.markColor(value))).frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(annotation.color == value ? Color.primary : .clear, lineWidth: 3))
                         }.buttonStyle(.plain)
-                        Toggle("遮挡\(mask.kind.title)", isOn: Binding(get: { mask.enabled }, set: { session.toggleMask(mask.id, enabled: $0) })).labelsHidden()
-                    }.padding(.vertical, 4)
+                    }
+                    Spacer()
                 }
-            }.navigationTitle("隐私复核").navigationBarTitleDisplayMode(.inline)
+                Text(annotation.text.isEmpty ? "文字预览" : annotation.text)
+                    .font(.system(size: min(36, annotation.width * 5), weight: .semibold)).foregroundStyle(Color(uiColor: Renderer.markColor(annotation.color)))
+                    .lineLimit(2).frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                Spacer(minLength: 0)
+                }.padding(20)
+            }.scrollDismissesKeyboard(.interactively)
+                .navigationTitle("编辑文字").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } }
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            Button("全部遮挡并标为已复核") { session.change { p in for i in p.edit.masks.indices { p.edit.masks[i].enabled = true; p.edit.masks[i].reviewed = true } } }
-                            Button("保持当前选择，全部标为已复核") { session.change { p in for i in p.edit.masks.indices { p.edit.masks[i].reviewed = true } } }
-                        } label: { Image(systemName: "checkmark.circle") }
+                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { annotation.text = String(annotation.text.prefix(300)); save(annotation); dismiss() }
+                            .disabled(annotation.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("save-annotation-text")
                     }
                 }
-        }.presentationDetents([.medium, .large])
+                .onAppear { focused = true }
+        }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
     }
 }

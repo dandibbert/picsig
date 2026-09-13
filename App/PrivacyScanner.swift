@@ -150,7 +150,7 @@ enum PrivacyScanner {
             if !duplicate { unique.append(mask) }
         }
         guard unique.count <= 5000 else { throw PicSigError.storage("隐私标记过多，请缩短拼图后分别检查。") }
-        progress(1, "识别完成 · \(unique.count) 处待复核")
+        progress(1, "识别完成 · \(unique.count) 处已遮挡")
         return ScanReport(masks: unique.sorted { $0.rect.y == $1.rect.y ? $0.rect.x < $1.rect.x : $0.rect.y < $1.rect.y }, warnings: warnings, textLines: lines.count)
     }
 
@@ -169,65 +169,18 @@ enum PrivacyScanner {
     }
 
     private static func protectAddressFollowers(_ lines: inout [Line], options: PrivacyOptions) {
-        guard options.enabledKinds.contains(.address), lines.count > 1 else { return }
-        let labels: Set<String> = [
-            "地址", "住址", "家庭住址", "现住址", "收货地址", "收件地址", "寄件地址", "详细地址",
-            "address", "home address", "shipping address", "delivery address"
-        ]
-        let ordered = lines.indices.sorted { lhs, rhs in
-            let a = lineBox(lines[lhs]), b = lineBox(lines[rhs])
-            if abs(a.y - b.y) < max(a.height, b.height) * 0.5 { return a.x < b.x }
-            return a.y < b.y
-        }
-
-        for position in ordered.indices {
-            let currentIndex = ordered[position]
-            let raw = lines[currentIndex].candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalized = raw.trimmingCharacters(in: CharacterSet(charactersIn: ":：-— ")).lowercased()
-            guard labels.contains(normalized), !lines[currentIndex].findings.contains(where: { $0.kind == .address }) else { continue }
-            let current = lineBox(lines[currentIndex])
-
-            for offset in 1...min(2, ordered.count - position - 1) {
-                let nextIndex = ordered[position + offset]
-                let next = lineBox(lines[nextIndex])
-                let verticalGap = next.y - current.maxY
-                if verticalGap < -current.height * 0.4 { continue }
-                if verticalGap > max(96, current.height * 3.2) { break }
-                let value = lines[nextIndex].candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard value.count >= 4, value.count <= 160 else { continue }
-                let full = NSRange(value.startIndex..<value.endIndex, in: value)
-                lines[nextIndex].findings.append(TextFinding(range: full, kind: .address, confidence: 0.84))
-                break
+        guard options.enabledKinds.contains(.address) else { return }
+        let regions = lines.map { AddressDetector.Line($0.candidate.string, lineBox($0)) }
+        for index in AddressDetector.protectedLines(regions) {
+            let text = lines[index].candidate.string
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            if !lines[index].findings.contains(where: { $0.kind == .address && $0.range == range }) {
+                lines[index].findings.append(TextFinding(range: range, kind: .address, confidence: 0.84))
             }
         }
     }
 
-    static func looksLikeResidentialAddress(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 6, trimmed.count <= 180 else { return false }
-        let lower = trimmed.lowercased()
-        let hasDigit = trimmed.contains(where: \.isNumber)
-
-        let addressLabels = ["收货地址", "收件地址", "寄件地址", "详细地址", "家庭住址", "现住址", "住址", "地址", "shipping address", "home address", "delivery address", "address"]
-        if addressLabels.contains(where: { lower.contains($0.lowercased()) }) && trimmed.count >= 8 { return true }
-
-        if hasDigit {
-            let adminMarkers = ["省", "自治区", "市", "区", "县", "旗", "街道", "镇", "乡"]
-            let streetMarkers = ["路", "街", "巷", "弄", "胡同", "大道", "大街", "小区", "社区", "花园", "公寓", "家园", "新村"]
-            let detailMarkers = ["号", "栋", "幢", "座", "单元", "室", "楼", "层", "户"]
-            let adminCount = adminMarkers.reduce(0) { $0 + (trimmed.contains($1) ? 1 : 0) }
-            if adminCount >= 2 && streetMarkers.contains(where: trimmed.contains) { return true }
-            if streetMarkers.contains(where: trimmed.contains) && detailMarkers.contains(where: trimmed.contains) { return true }
-
-            let latinStreetSuffixes = [" street", " st ", " road", " rd ", " avenue", " ave ", " boulevard", " blvd", " lane", " ln ", " drive", " dr ", " court", " ct ", " place", " pl ", " highway", " hwy", " way"]
-            if trimmed.first?.isNumber == true && latinStreetSuffixes.contains(where: { lower.contains($0) }) { return true }
-
-            let japanRegion = ["東京都", "北海道", "府", "県"].contains(where: trimmed.contains)
-            let japanDetail = ["丁目", "番", "号"].contains(where: trimmed.contains)
-            if japanRegion && japanDetail && ["市", "区", "町", "村"].contains(where: trimmed.contains) { return true }
-        }
-        return false
-    }
+    static func looksLikeResidentialAddress(_ text: String) -> Bool { AddressDetector.isAddress(text) }
 
     private static func linguisticFindings(_ text: String, options: PrivacyOptions) -> [TextFinding] {
         var findings: [TextFinding] = []

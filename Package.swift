@@ -6,6 +6,6 @@ let package = Package(
     products: [.library(name: "PicSigCore", targets: ["PicSigCore"])],
     targets: [
         .target(name: "PicSigCore"),
-        .testTarget(name: "PicSigCoreTests", dependencies: ["PicSigCore"])
+        .testTarget(name: "PicSigCoreTests", dependencies: ["PicSigCore"], resources: [.copy("Fixtures")])
     ]
 )

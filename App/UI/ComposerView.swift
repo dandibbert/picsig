@@ -5,41 +5,31 @@ struct StudioView: View {
     @ObservedObject var session: StudioSession
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
-    @State private var backToLayout = false
+
     var body: some View {
         NavigationStack {
             Group {
                 if session.stage == .compose { ComposerView(session: session) }
                 else { EditorView(session: session) }
             }
-            .navigationTitle(session.stage == .compose ? "拼接工作台" : "隐私与编辑")
+            .navigationTitle(session.stage == .compose ? "拼接" : "编辑")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if session.stage == .edit {
-                        Button { backToLayout = true } label: { Label("拼接", systemImage: "chevron.left") }.disabled(session.busy)
+                        Button { session.stage = .compose } label: { Label("拼接", systemImage: "chevron.left") }.disabled(session.busy)
                     } else {
                         Button("完成") { close() }.disabled(session.busy)
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if session.stage == .edit {
-                        Menu {
-                            Button("保存并关闭", systemImage: "checkmark") { close() }
-                            Button("清空标记与裁剪", systemImage: "arrow.counterclockwise") { session.change { $0.edit = EditState() } }
-                        } label: { Image(systemName: "ellipsis.circle") }.disabled(session.busy)
-                    }
-                }
+
             }
             .overlay { WorkOverlay(session: session) }
-            .confirmationDialog("返回拼接工作台？", isPresented: $backToLayout, titleVisibility: .visible) {
-                Button("返回拼接") { session.stage = .compose }
-            } message: { Text("目前的标记会保留。之后若调整素材、顺序或布局，打码与标注会重置，避免错位；可用撤销恢复。") }
             .sheet(isPresented: $session.showExport) { ExportFlowView(session: session) }
             .notice($session.notice)
             .task {
                 session.refreshPreview()
-                if session.stage == .edit && !session.project.edit.scanFinished && session.project.edit.masks.isEmpty { session.scan() }
+
             }
             .onChange(of: phase) { _, value in if value == .background && session.busy { session.cancel() } }
         }.tint(.picAccent)
@@ -63,8 +53,6 @@ struct ComposerView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                TextField("项目名称", text: Binding(get: { session.project.title }, set: { value in session.change({ $0.title = String(value.prefix(80)) }, coalesce: true) }))
-                    .font(.title3.weight(.semibold)).accessibilityLabel("项目名称")
                 preview
                 if let note = session.note {
                     Label(note, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -83,7 +71,7 @@ struct ComposerView: View {
                     if session.project.kind.isScroll {
                         VStack(alignment: .leading, spacing: 14) {
                             Toggle("自动去除重复顶部 / 底部", isOn: $trimBars).font(.subheadline)
-                            Text("仅识别固定外边缘，保留首张顶部和末张底部。复杂导航栏建议用单张裁剪微调。").font(.caption).foregroundStyle(.secondary)
+                            Text("清理固定状态栏、地址栏和工具栏；复杂或动态栏可在单张裁剪中调整。").font(.caption).foregroundStyle(.secondary)
                             Button { session.autoStitch(trimBars: trimBars) } label: { Label("重新自动拼接", systemImage: "wand.and.stars").frame(maxWidth: .infinity) }
                                 .buttonStyle(.bordered).disabled(session.project.images.count < 2).accessibilityIdentifier("auto-stitch")
                         }.cardSurface()
@@ -112,7 +100,7 @@ struct ComposerView: View {
         }.background(Color.picCanvas)
         .safeAreaInset(edge: .bottom) {
             if !session.project.images.isEmpty {
-                Button { session.enterEditor() } label: { Label("下一步 · 隐私与编辑", systemImage: "checkmark.shield").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 5) }
+                Button { session.enterEditor() } label: { Label("完成拼接", systemImage: "checkmark.shield").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 5) }
                     .buttonStyle(.borderedProminent).controlSize(.large).padding(16).background(.regularMaterial).disabled(session.busy).accessibilityIdentifier("enter-editor")
             }
         }

@@ -24,7 +24,6 @@ public struct OverlapMatch: Sendable {
 }
 
 public enum OverlapDetector {
-    private struct Score { var rows: Int; var error: Double; var texture: Double }
 
     public static func difference(_ a: GrayRaster, _ b: GrayRaster) -> Double {
         guard a.width == b.width, a.height == b.height else { return 255 }
@@ -35,58 +34,125 @@ public enum OverlapDetector {
         return sum / Double(max(1, count))
     }
 
-    /// Refuses low-texture and ambiguous matches instead of silently deleting content.
+    /// Anchor matching uses actual horizontal detail, not a mean of predominantly white rows.
+    /// Each independently matched text/image strip votes for a vertical translation. A second,
+    /// dense pass checks that translation before any source pixels are removed.
     public static func match(_ a: GrayRaster, _ b: GrayRaster) -> OverlapMatch? {
-        guard a.width == b.width else { return nil }
-        if difference(a, b) < 1.1 { return OverlapMatch(rows: b.height, confidence: 1, duplicate: true) }
-        let maximum = min(a.height, b.height) - 6
-        let minimum = max(16, min(64, maximum / 12))
-        guard maximum > minimum else { return nil }
-        let step = 1
-        var coarse: [Score] = []
-        for rows in stride(from: minimum, through: maximum, by: step) { coarse.append(score(a, b, rows: rows, samples: 12)) }
-        let seeds = coarse.sorted { $0.error < $1.error }.prefix(8)
-        var candidates = Set<Int>()
-        for seed in seeds {
-            for row in max(minimum, seed.rows - step)...min(maximum, seed.rows + step) { candidates.insert(row) }
-        }
-        let refined = candidates.map { score(a, b, rows: $0, samples: 112) }.sorted { $0.error < $1.error }
-        guard let best = refined.first, best.error < 14, best.texture > 2.5 else { return nil }
-        let separation = max(5, maximum / 300)
-        let next = refined.first { abs($0.rows - best.rows) > separation }
-        if let next = next, next.error - best.error < 0.9 { return nil }
-        let certainty = max(0, 1 - best.error / 18)
-        guard certainty >= 0.40 else { return nil }
-        return OverlapMatch(rows: best.rows, confidence: certainty, duplicate: false)
+        translatedMatch(a, b, chrome: false)
     }
 
-    private static func score(_ a: GrayRaster, _ b: GrayRaster, rows: Int, samples: Int) -> Score {
-        let inset = max(2, a.width / 12)
-        let xStep = max(1, (a.width - 2 * inset) / (samples <= 12 ? 12 : 28))
-        let yStep = max(1, rows / samples)
-        var weighted = 0.0, weightSum = 0.0, texture = 0.0, count = 0
-        for y in stride(from: 1, to: rows - 1, by: yStep) {
-            let ay = a.height - rows + y
-            for x in stride(from: inset, to: a.width - inset, by: xStep) {
-                let ai = ay * a.width + x, bi = y * b.width + x
-                let edgeA = abs(Int(a.pixels[ai + 1]) - Int(a.pixels[ai - 1])) + abs(Int(a.pixels[ai + a.width]) - Int(a.pixels[ai - a.width]))
-                let edgeB = abs(Int(b.pixels[bi + 1]) - Int(b.pixels[bi - 1])) + abs(Int(b.pixels[bi + b.width]) - Int(b.pixels[bi - b.width]))
-                let edge = Double(max(edgeA, edgeB))
-                let weight = 1 + min(8, edge / 24)
-                weighted += Double(abs(Int(a.pixels[ai]) - Int(b.pixels[bi]))) * weight
-                weightSum += weight; texture += edge; count += 1
+    /// Fallback on the ORIGINAL viewports. Browser bars must not destroy the evidence needed
+    /// to find the scrolling displacement. `rows` includes chrome; subtract crop insets later.
+    public static func viewportMatch(_ a: GrayRaster, _ b: GrayRaster) -> OverlapMatch? {
+        translatedMatch(a, b, chrome: true)
+    }
+
+    private struct AnchorVote { var count = 0; var error = 0.0 }
+    private struct Verified { var rows: Int; var error: Double; var support: Double; var good: Int }
+
+    private static func translatedMatch(_ a: GrayRaster, _ b: GrayRaster, chrome: Bool) -> OverlapMatch? {
+        guard a.width == b.width else { return nil }
+        if difference(a, b) < 1.1 { return OverlapMatch(rows: b.height, confidence: 1, duplicate: true) }
+        let w = a.width, lanes = 24, patch = 8
+        let inset = max(1, w / 32)
+        let xs = (0..<lanes).map { inset + $0 * (w - inset * 2 - 1) / (lanes - 1) }
+        func signatures(_ raster: GrayRaster) -> [Int] {
+            var result = [Int](); result.reserveCapacity(raster.height * lanes)
+            for y in 0..<raster.height {
+                for x in xs { result.append(Int(raster.pixels[y * w + x])) }
+            }
+            return result
+        }
+        let ap = signatures(a), bp = signatures(b)
+        // More than one anchor per typical text line; blank/flat bands do not get a vote.
+        let bin = max(8, b.height / 64)
+        var anchors: [Int] = []
+        for low in stride(from: 1, to: min(b.height, a.height) - patch, by: bin) {
+            var best = low, strength = 0
+            for y in low..<min(low + bin, b.height - patch) {
+                var texture = 0
+                for lane in 1..<lanes {
+                    texture += abs(bp[y * lanes + lane] - bp[y * lanes + lane - 1])
+                    texture += abs(bp[y * lanes + lane] - bp[(y + 3) * lanes + lane])
+                }
+                if texture > strength { best = y; strength = texture }
+            }
+            if strength > lanes * 3 { anchors.append(best) }
+        }
+        guard anchors.count >= 2 else { return nil }
+        var votes: [Int: AnchorVote] = [:]
+        for by in anchors {
+            if Task.isCancelled { return nil }
+            var bestError = Double.infinity, bestShift = 0
+            guard a.height - patch > by else { continue }
+            for ay in (by + 1)..<(a.height - patch) {
+                var error = 0
+                // Full-resolution vertical samples avoid aliasing small text and thin separators.
+                for dy in [0, 2, 4, 7] {
+                    let ai = (ay + dy) * lanes, bi = (by + dy) * lanes
+                    for lane in 0..<lanes { error += abs(ap[ai + lane] - bp[bi + lane]) }
+                }
+                let value = Double(error) / Double(lanes * 4)
+                if value < bestError { bestError = value; bestShift = ay - by }
+            }
+            if bestError < 12 {
+                var vote = votes[bestShift] ?? AnchorVote()
+                vote.count += 1; vote.error += bestError; votes[bestShift] = vote
             }
         }
-        return Score(rows: rows, error: weighted / max(1, weightSum), texture: texture / Double(max(1, count)))
+        let seeds = votes.keys.sorted {
+            let l = votes[$0]!, r = votes[$1]!
+            return l.count == r.count ? l.error / Double(l.count) < r.error / Double(r.count) : l.count > r.count
+        }.prefix(16)
+        var shifts = Set<Int>()
+        for seed in seeds { for shift in max(1, seed - 2)...(seed + 2) { shifts.insert(shift) } }
+        var verified: [Verified] = []
+        for shift in shifts {
+            let rows = min(a.height - shift, b.height)
+            guard rows >= 24 else { continue }
+            var good = 0, informative = 0, errors: [Double] = [], first = rows, last = 0
+            let yStep = max(1, rows / 600)
+            for y in stride(from: 1, to: rows - 1, by: yStep) {
+                let ai = (y + shift) * lanes, bi = y * lanes
+                var error = 0, texture = 0
+                for lane in 1..<lanes {
+                    error += abs(ap[ai + lane] - bp[bi + lane])
+                    texture += max(abs(ap[ai + lane] - ap[ai + lane - 1]), abs(bp[bi + lane] - bp[bi + lane - 1]))
+                    texture += max(abs(ap[ai + lane] - ap[ai - lanes + lane]), abs(bp[bi + lane] - bp[bi - lanes + lane]))
+                }
+                guard texture > (lanes - 1) * 3 else { continue }
+                informative += 1
+                let e = Double(error) / Double(lanes - 1)
+                errors.append(e)
+                if e < 10 { good += 1; first = min(first, y); last = y }
+            }
+            guard informative >= 12, good >= 12, last - first >= 16 else { continue }
+            let support = Double(good) / Double(informative)
+            guard support >= (chrome ? 0.48 : 0.82) else { continue }
+            errors.sort()
+            let kept = max(1, Int(Double(errors.count) * (chrome ? 0.55 : 0.90)))
+            let error = errors.prefix(kept).reduce(0, +) / Double(kept)
+            guard error < 9 else { continue }
+            verified.append(Verified(rows: a.height - shift, error: error, support: support, good: good))
+        }
+        verified.sort { l, r in
+            let ls = l.support - l.error / 30, rs = r.support - r.error / 30
+            return abs(ls - rs) < 0.005 ? l.good > r.good : ls > rs
+        }
+        guard let best = verified.first else { return nil }
+        if let other = verified.first(where: { abs($0.rows - best.rows) > 5 }),
+           abs(other.error - best.error) < max(0.08, best.error * 0.12), abs(other.support - best.support) < 0.04,
+           Double(min(other.good, best.good)) / Double(max(other.good, best.good)) > 0.8 { return nil }
+        return OverlapMatch(rows: min(best.rows, b.height), confidence: min(1, max(0.45, best.support * (1 - best.error / 24))), duplicate: best.rows >= b.height)
     }
 
     /// Detects UI chrome that stays pinned to the outer edge while the page content moves.
     /// A trimmed row metric deliberately ignores a minority of changing pixels (clock text,
     /// loading indicators, translucent chrome) instead of requiring every pixel to be identical.
     public static func fixedInsets(_ a: GrayRaster, _ b: GrayRaster) -> (top: Int, bottom: Int) {
-        guard a.width == b.width, difference(a, b) > 3 else { return (0, 0) }
+        guard a.width == b.width, difference(a, b) > 0.35 else { return (0, 0) }
         let limit = min(a.height, b.height) * 18 / 100
-        let xInset = max(1, a.width / 24)
+        let xInset = max(1, a.width / 5)
 
         func rowIsStable(_ ay: Int, _ by: Int) -> Bool {
             var diffs: [Int] = []
@@ -96,7 +162,7 @@ public enum OverlapDetector {
             }
             guard !diffs.isEmpty else { return false }
             diffs.sort()
-            let kept = max(4, diffs.count * 3 / 4)
+            let kept = max(4, diffs.count * 9 / 10)
             let trimmedMean = Double(diffs.prefix(kept).reduce(0, +)) / Double(kept)
             let q75 = diffs[min(diffs.count - 1, kept - 1)]
             return trimmedMean < 5.0 && q75 < 15

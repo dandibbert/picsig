@@ -52,7 +52,10 @@ actor MediaWorker {
             let largest = project.images.map { project.kind == .horizontal ? $0.size.height : $0.size.width }.max() ?? 1440
             project.layout.breadth = min(2160, max(128, largest))
         }
-        project.updatedAt = Date(); project.edit = EditState()
+        project.updatedAt = Date()
+        if let old = try? Composition.build(original), let new = try? Composition.build(project) {
+            project.edit = EditRemapper.remap(original.edit, from: old, to: new)
+        }
         try Task.checkCancellation(); try ProjectStore.save(project); committed = true
         return (project, failed)
     }
@@ -67,15 +70,19 @@ actor MediaWorker {
         }
         guard let result = image.cgImage else { throw PicSigError.invalidImage }
         project.images[index] = try ProjectStore.addImage(result, project: project.id)
+        project.images[index].id = sourceID
         for i in project.images.indices { project.images[i].leadingCut = 0; project.images[i].automaticCrop = nil; project.images[i].matchConfidence = nil }
-        project.edit = EditState(); project.updatedAt = Date()
+        if let old = try? Composition.build(original), let new = try? Composition.build(project) {
+            project.edit = EditRemapper.remap(original.edit, from: old, to: new, clockwiseRotations: [sourceID: 1])
+        }
+        project.updatedAt = Date()
         try ProjectStore.save(project)
         return project
     }
     static func raster(_ image: CGImage, crop: Box = .unit, yScale: Double = 1) throws -> GrayRaster {
         let rect = crop.intersection(.unit).scaled(to: Size2D(Double(image.width), Double(image.height)))
         guard let cropped = image.cropping(to: rect.cgRect.integral) else { throw PicSigError.invalidImage }
-        let width = 64, height = min(8192, max(8, Int(Double(cropped.height) * yScale)))
+        let width = 96, height = min(8192, max(8, Int(Double(cropped.height) * yScale)))
         var pixels = [UInt8](repeating: 0, count: width * height)
         let success = pixels.withUnsafeMutableBytes { bytes -> Bool in
             guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8,
@@ -107,30 +114,42 @@ actor MediaWorker {
             top = values.map(\.top).min() ?? 0; bottom = values.map(\.bottom).min() ?? 0
         }
         var accepted: [SourceImage] = [], content: [GrayRaster] = [], cuts: [Int] = [], uncertain = 0
+        var lastAcceptedRaster: GrayRaster?
         for (index, var source) in images.enumerated() {
             try Task.checkCancellation()
             let raster = try rasters[index].removing(top: top, bottom: bottom)
             var cut = 0
             if let previous = content.last, let last = accepted.last {
                 let widthRatio = source.crop.width * source.size.width / (last.crop.width * last.size.width)
-                let match = abs(widthRatio - 1) < 0.025 ? OverlapDetector.match(previous, raster) : nil
+                var match = abs(widthRatio - 1) < 0.025 ? OverlapDetector.match(previous, raster) : nil
+                if match == nil, abs(widthRatio - 1) < 0.025, let previousRaw = lastAcceptedRaster,
+                   let raw = OverlapDetector.viewportMatch(previousRaw, rasters[index]), !raw.duplicate {
+                    let bodyRows = raw.rows - top - bottom
+                    if bodyRows > 0, bodyRows < raster.height {
+                        match = OverlapMatch(rows: bodyRows, confidence: raw.confidence, duplicate: false)
+                    }
+                }
                 if let match = match {
                     if match.duplicate { duplicates += 1; continue }
                     cut = match.rows; source.matchConfidence = match.confidence
                 } else { source.matchConfidence = 0; uncertain += 1 }
             }
             accepted.append(source); content.append(raster); cuts.append(cut)
+            lastAcceptedRaster = rasters[index]
             progress(0.3 + Double(index + 1) / Double(images.count) * 0.7, "匹配拼接缝 \(index + 1) / \(images.count)")
         }
         for index in accepted.indices {
             let originalCrop = accepted[index].crop.scaled(to: accepted[index].size)
-            let topPixels = index == 0 ? 0 : Double(top) / yScale
-            let bottomPixels = index == accepted.count - 1 ? 0 : Double(bottom) / yScale
+            let topPixels = Double(top) / yScale
+            let bottomPixels = Double(bottom) / yScale
             let rect = Box(originalCrop.x, originalCrop.y + topPixels, originalCrop.width, originalCrop.height - topPixels - bottomPixels)
             accepted[index].automaticCrop = rect.normalized(to: accepted[index].size)
             accepted[index].leadingCut = Double(cuts[index]) / yScale / max(1, rect.height)
         }
-        project.images = accepted; project.edit = EditState(); project.updatedAt = Date()
+        project.images = accepted; project.updatedAt = Date()
+        if let old = try? Composition.build(original), let new = try? Composition.build(project) {
+            project.edit = EditRemapper.remap(original.edit, from: old, to: new)
+        }
         _ = try Composition.build(project); try Task.checkCancellation(); try ProjectStore.save(project)
         return StitchReport(project: project, duplicates: duplicates, uncertain: uncertain)
     }

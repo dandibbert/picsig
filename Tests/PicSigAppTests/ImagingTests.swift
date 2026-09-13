@@ -389,4 +389,54 @@ final class ImagingTests: XCTestCase {
         XCTAssertFalse(PrivacyScanner.looksLikeResidentialAddress("今天走这条道路很开心"))
         XCTAssertFalse(PrivacyScanner.looksLikeResidentialAddress("产品型号 A1234，版本 2.0"))
     }
+
+    @MainActor
+    func testRenderedTextScreenshotsStitchWithoutRepeatingParagraphs() async throws {
+        let width = 600, body = 1100, top = 120, bottom = 100, docHeight = 1760, advance = 660
+        let document = try image(width: width, height: docHeight) { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: width, height: docHeight))
+            for line in 0..<43 {
+                let y = CGFloat(18 + line * 40)
+                let text = String(format: "%02d  %@", line, ["A screenshot is mostly white space.", "Keep each paragraph exactly once.", "Shipping address and private notes.", "Tap the image text to redact it."][line % 4])
+                (text as NSString).draw(at: CGPoint(x: 24, y: y), withAttributes: [.font: UIFont.systemFont(ofSize: 22), .foregroundColor: UIColor.black])
+            }
+        }
+        let first = try makeBrowserScreenshot(document: document, width: width, bodyHeight: body, topBar: top, bottomBar: bottom, offset: 0, changingClock: false)
+        let second = try makeBrowserScreenshot(document: document, width: width, bodyHeight: body, topBar: top, bottomBar: bottom, offset: advance, changingClock: true)
+        var p = Project(title: "Rendered text regression", kind: .scroll)
+        projects.append(p.id); p.layout.breadth = Double(width)
+        p.images = [try ProjectStore.addImage(first, project: p.id), try ProjectStore.addImage(second, project: p.id)]
+        let report = try await MediaWorker.shared.stitch(p, trimBars: true, progress: { _, _ in })
+        XCTAssertEqual(report.uncertain, 0, "A real text layout must not fall back to simple stacking")
+        let a = try XCTUnwrap(report.project.images.first), b = try XCTUnwrap(report.project.images.last)
+        let cropA = try XCTUnwrap(a.automaticCrop).scaled(to: a.size)
+        let cropB = try XCTUnwrap(b.automaticCrop).scaled(to: b.size)
+        XCTAssertGreaterThanOrEqual(cropA.y, Double(top - 2))
+        XCTAssertLessThan(cropA.y, Double(top + 30), "Must not delete the first paragraph")
+        XCTAssertGreaterThanOrEqual(b.size.height - cropB.maxY, Double(bottom - 2))
+        let rendered = try Renderer.render(report.project)
+        let expectedStart = cropA.y - Double(top)
+        let expectedEnd = Double(advance) + cropB.maxY - Double(top)
+        XCTAssertEqual(Double(rendered.size.height), expectedEnd - expectedStart, accuracy: 2, "Every content row must occur once")
+        for (name, source) in [("TextInput-A", UIImage(cgImage: first)), ("TextInput-B", UIImage(cgImage: second)), ("TextStitched-Result", rendered)] {
+            let item = XCTAttachment(image: source); item.name = name; item.lifetime = .keepAlways; add(item)
+        }
+    }
+
+    func testVisionProtectsAnEntireWrappedAddressBlock() throws {
+        let source = try image(width: 1000, height: 600) { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 600))
+            let values = ["Shipping Address", "1234 Market Street", "Building 6 Apartment 802", "San Francisco, CA 94103", "Order: TEST-ONLY"]
+            for (index, text) in values.enumerated() {
+                (text as NSString).draw(at: CGPoint(x: 70, y: 65 + index * 85), withAttributes: [.font: UIFont.systemFont(ofSize: 36), .foregroundColor: UIColor.black])
+            }
+        }
+        var p = try project(source); p.privacy.enabledKinds = [.address]
+        let report = try PrivacyScanner.scan(p, progress: { _, _ in })
+        let addresses = report.masks.filter { $0.kind == .address }
+        for y in [160.0, 245.0, 330.0] {
+            XCTAssertTrue(addresses.contains { $0.rect.contains(Point2D(0.1, y / 600)) }, "Address continuation at y=\(y) was missed")
+        }
+        XCTAssertFalse(addresses.contains { $0.rect.contains(Point2D(0.1, 415.0 / 600)) }, "Must stop at the next form field")
+    }
 }

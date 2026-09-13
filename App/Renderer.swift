@@ -125,3 +125,38 @@ enum Renderer {
         }
     }
 }
+
+extension Renderer {
+    static func annotationBounds(_ mark: Annotation, canvas: Size2D) -> Box {
+        guard let origin = mark.points.first else { return Box(0, 0, 0, 0) }
+        if mark.kind == .text {
+            let font = UIFont.systemFont(ofSize: max(18, mark.width * 5), weight: .semibold)
+            let maxWidth = max(1, canvas.width * (1 - origin.x))
+            let bounds = (mark.text as NSString).boundingRect(with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+            return Box(origin.x, origin.y, max(12, ceil(bounds.width)) / canvas.width, max(font.lineHeight, ceil(bounds.height)) / canvas.height)
+        }
+        let xs = mark.points.map(\.x), ys = mark.points.map(\.y)
+        let padding = max(4, mark.width) / 2
+        return Box(xs.min() ?? 0, ys.min() ?? 0, max(1 / canvas.width, (xs.max() ?? 0) - (xs.min() ?? 0)), max(1 / canvas.height, (ys.max() ?? 0) - (ys.min() ?? 0)))
+            .expanded(dx: padding / canvas.width, dy: padding / canvas.height)
+    }
+    static func hitAnnotation(_ mark: Annotation, at point: Point2D, canvas: Size2D, tolerance: Size2D) -> Bool {
+        let box = annotationBounds(mark, canvas: canvas)
+        guard box.expanded(dx: tolerance.width, dy: tolerance.height).contains(point) else { return false }
+        if mark.kind == .text { return true }
+        if mark.kind == .rectangle {
+            let inner = box.expanded(dx: -tolerance.width, dy: -tolerance.height)
+            return !inner.isValid || !inner.contains(point)
+        }
+        guard mark.points.count > 1 else { return true }
+        let p = CGPoint(x: point.x * canvas.width, y: point.y * canvas.height)
+        let threshold = max(tolerance.width * canvas.width, tolerance.height * canvas.height) + mark.width
+        for i in 1..<mark.points.count {
+            let a = mark.points[i - 1], b = mark.points[i]
+            let ax = a.x * canvas.width, ay = a.y * canvas.height, dx = (b.x - a.x) * canvas.width, dy = (b.y - a.y) * canvas.height
+            let t = max(0, min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / max(0.0001, dx * dx + dy * dy)))
+            if hypot(p.x - ax - t * dx, p.y - ay - t * dy) <= threshold { return true }
+        }
+        return false
+    }
+}
