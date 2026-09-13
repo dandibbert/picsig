@@ -23,6 +23,17 @@ jobs:
               | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
               | gunzip > /tmp/picsig-repair.patch
             git apply --binary --index /tmp/picsig-repair.patch
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path("App/UI/ZoomCanvas.swift")
+          source = path.read_text()
+          old = "return Size2D(16 / max(1, size.width * scale), 16 / max(1, size.height * scale))"
+          new = "return Size2D(16.0 / max(1.0, Double(size.width * scale)), 16.0 / max(1.0, Double(size.height * scale)))"
+          if old not in source:
+              raise SystemExit("expected ZoomCanvas conversion line not found")
+          path.write_text(source.replace(old, new, 1))
+          PY
+            git add App/UI/ZoomCanvas.swift
             echo "PICSIG_REPAIR_BOOTSTRAP=1" >> "$GITHUB_ENV"
             git diff --cached --stat
           fi
