@@ -5,14 +5,23 @@ import ImageIO
 
 final class ImagingTests: XCTestCase {
     private var projects: [UUID] = []
+
     override func tearDown() {
         for id in projects { try? ProjectStore.delete(id) }
         super.tearDown()
     }
+
     private func image(width: Int = 256, height: Int = 256, draw: (CGContext) -> Void) throws -> CGImage {
-        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
-        return try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { draw($0.cgContext) }.cgImage)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return try XCTUnwrap(
+            UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
+                .image { draw($0.cgContext) }
+                .cgImage
+        )
     }
+
     private func project(_ cgImage: CGImage) throws -> Project {
         var project = Project(title: "Synthetic image test", kind: .scroll)
         projects.append(project.id)
@@ -20,56 +29,149 @@ final class ImagingTests: XCTestCase {
         project.layout.breadth = Double(cgImage.width)
         return project
     }
+
     private func rgba(_ cgImage: CGImage) throws -> [UInt8] {
         var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
         let result = pixels.withUnsafeMutableBytes { bytes -> Bool in
-            guard let context = CGContext(data: bytes.baseAddress, width: cgImage.width, height: cgImage.height,
-                                          bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
-                                          space: CGColorSpaceCreateDeviceRGB(),
-                                          bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            guard let context = CGContext(
+                data: bytes.baseAddress,
+                width: cgImage.width,
+                height: cgImage.height,
+                bitsPerComponent: 8,
+                bytesPerRow: cgImage.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
             return true
         }
-        XCTAssertTrue(result); return pixels
+        XCTAssertTrue(result)
+        return pixels
     }
+
+    /// Generates vertically unique, high-texture rows without a deeply nested drawing closure.
+    /// Exact repeated viewport content should therefore have one unambiguous overlap.
+    private func makeScrollDocument(width: Int, height: Int) throws -> CGImage {
+        let canvasWidth = CGFloat(width)
+        return try image(width: width, height: height) { context in
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: canvasWidth, height: CGFloat(height)))
+
+            for row in 0..<height {
+                let seed = (row * 73 + row * row * 19 + 41) % 223
+                let level = CGFloat(seed + 16) / 255.0
+                context.setFillColor(UIColor(white: level, alpha: 1).cgColor)
+                context.fill(CGRect(x: 0, y: CGFloat(row), width: canvasWidth, height: 1))
+            }
+        }
+    }
+
+    private func makeBrowserScreenshot(
+        document: CGImage,
+        width: Int,
+        bodyHeight: Int,
+        topBar: Int,
+        bottomBar: Int,
+        offset: Int,
+        changingClock: Bool
+    ) throws -> CGImage {
+        let totalHeight = topBar + bodyHeight + bottomBar
+        let w = CGFloat(width)
+        let top = CGFloat(topBar)
+        let body = CGFloat(bodyHeight)
+        let bottom = CGFloat(bottomBar)
+        let documentImage = UIImage(cgImage: document)
+
+        return try image(width: width, height: totalHeight) { context in
+            context.setFillColor(UIColor(white: 0.10, alpha: 1).cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: w, height: top))
+
+            context.setFillColor(UIColor(white: 0.92, alpha: 1).cgColor)
+            context.fill(CGRect(x: 100, y: 13, width: 120, height: 22))
+
+            if changingClock {
+                context.setFillColor(UIColor.systemRed.cgColor)
+                context.fill(CGRect(x: 12, y: 14, width: 28, height: 18))
+            }
+
+            context.saveGState()
+            context.clip(to: CGRect(x: 0, y: top, width: w, height: body))
+            documentImage.draw(at: CGPoint(x: 0, y: top - CGFloat(offset)))
+            context.restoreGState()
+
+            let footerY = top + body
+            context.setFillColor(UIColor(white: 0.88, alpha: 1).cgColor)
+            context.fill(CGRect(x: 0, y: footerY, width: w, height: bottom))
+            context.setFillColor(UIColor(white: 0.35, alpha: 1).cgColor)
+            context.fill(CGRect(x: 42, y: footerY + 20, width: 236, height: 18))
+        }
+    }
+
     func testGrayRasterMaintainsTopToBottomOrientation() throws {
         let source = try image { context in
-            context.setFillColor(UIColor.black.cgColor); context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
-            context.setFillColor(UIColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: 256, height: 100))
+            context.setFillColor(UIColor.black.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 256, height: 100))
         }
         let raster = try MediaWorker.raster(source)
         XCTAssertGreaterThan(raster.pixels[20 * raster.width + 20], 240)
         XCTAssertLessThan(raster.pixels[220 * raster.width + 20], 10)
     }
+
     func testMasksAreOpaqueAndIndependentOfUnderlyingPixels() throws {
-        let red = try image { $0.setFillColor(UIColor.red.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
-        let blue = try image { $0.setFillColor(UIColor.blue.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
+        let red = try image {
+            $0.setFillColor(UIColor.red.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
+        let blue = try image {
+            $0.setFillColor(UIColor.blue.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
         for style in MaskStyle.allCases {
-            var first = try project(red), second = try project(blue)
-            var mask = PrivacyMask(rect: .unit, kind: .manual); mask.style = style
-            first.edit.masks = [mask]; second.edit.masks = [mask]
+            var first = try project(red)
+            var second = try project(blue)
+            var mask = PrivacyMask(rect: .unit, kind: .manual)
+            mask.style = style
+            first.edit.masks = [mask]
+            second.edit.masks = [mask]
             let a = try rgba(XCTUnwrap(Renderer.render(first).cgImage))
             let b = try rgba(XCTUnwrap(Renderer.render(second).cgImage))
             XCTAssertEqual(a, b, "Redaction output must not encode source pixels: \(style)")
             XCTAssertTrue(stride(from: 3, to: a.count, by: 4).allSatisfy { a[$0] == 255 })
         }
     }
+
     func testAnnotationCannotPaintOverMask() throws {
-        let source = try image { $0.setFillColor(UIColor.white.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
-        var p = try project(source); p.edit.masks = [PrivacyMask(rect: .unit, kind: .manual)]
+        let source = try image {
+            $0.setFillColor(UIColor.white.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
+        var p = try project(source)
+        p.edit.masks = [PrivacyMask(rect: .unit, kind: .manual)]
         let before = try rgba(XCTUnwrap(Renderer.render(p).cgImage))
-        p.edit.annotations = [Annotation(kind: .text, points: [Point2D(0.1, 0.1)], text: "secret", width: 8),
-                              Annotation(kind: .arrow, points: [Point2D(0, 0), Point2D(1, 1)], width: 20)]
+        p.edit.annotations = [
+            Annotation(kind: .text, points: [Point2D(0.1, 0.1)], text: "secret", width: 8),
+            Annotation(kind: .arrow, points: [Point2D(0, 0), Point2D(1, 1)], width: 20)
+        ]
         XCTAssertEqual(before, try rgba(XCTUnwrap(Renderer.render(p).cgImage)))
     }
+
     func testCropRotationAndRegionRenderMatchFullOutput() throws {
         let source = try image(width: 256, height: 512) { context in
             for row in 0..<512 {
-                context.setFillColor(UIColor(red: CGFloat(row % 100) / 100, green: CGFloat(row % 73) / 73, blue: 0.4, alpha: 1).cgColor)
+                let color = UIColor(
+                    red: CGFloat(row % 100) / 100,
+                    green: CGFloat(row % 73) / 73,
+                    blue: 0.4,
+                    alpha: 1
+                )
+                context.setFillColor(color.cgColor)
                 context.fill(CGRect(x: 0, y: row, width: 256, height: 1))
             }
         }
-        var p = try project(source); p.edit.crop = Box(0.125, 0.125, 0.75, 0.75)
+        var p = try project(source)
+        p.edit.crop = Box(0.125, 0.125, 0.75, 0.75)
         p.edit.masks = [PrivacyMask(rect: Box(0.2, 0.2, 0.25, 0.25), kind: .manual)]
         for turn in 0..<4 {
             p.edit.quarterTurns = turn
@@ -82,8 +184,12 @@ final class ImagingTests: XCTestCase {
             XCTAssertEqual(try rgba(part), try rgba(expected), "Tile transform mismatch at rotation \(turn)")
         }
     }
+
     func testWrittenExportsDoNotContainSourceMetadata() throws {
-        let source = try image { $0.setFillColor(UIColor.white.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
+        let source = try image {
+            $0.setFillColor(UIColor.white.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
         let p = try project(source)
         for jpeg in [false, true] {
             let url = ProjectStore.directory(p.id).appendingPathComponent(jpeg ? "export.jpg" : "export.png")
@@ -102,37 +208,76 @@ final class ImagingTests: XCTestCase {
             XCTAssertEqual(CGImageSourceGetCount(decoded), 1)
         }
     }
+
     func testStaleSaveCannotOverwriteNewerEdit() throws {
-        let source = try image { $0.setFillColor(UIColor.white.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
-        var older = try project(source); older.updatedAt = Date(timeIntervalSince1970: 100)
-        var newer = older; newer.updatedAt = Date(timeIntervalSince1970: 200); newer.title = "Newer"
-        try ProjectStore.save(newer); try ProjectStore.save(older)
-        let read = try JSONDecoder().decode(Project.self, from: Data(contentsOf: ProjectStore.directory(older.id).appendingPathComponent("project.json")))
+        let source = try image {
+            $0.setFillColor(UIColor.white.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
+        var older = try project(source)
+        older.updatedAt = Date(timeIntervalSince1970: 100)
+        var newer = older
+        newer.updatedAt = Date(timeIntervalSince1970: 200)
+        newer.title = "Newer"
+        try ProjectStore.save(newer)
+        try ProjectStore.save(older)
+        let manifest = ProjectStore.directory(older.id).appendingPathComponent("project.json")
+        let read = try JSONDecoder().decode(Project.self, from: Data(contentsOf: manifest))
         XCTAssertEqual(read.title, "Newer")
     }
+
     func testTraversalRejected() throws {
         let source = SourceImage(file: "../../outside.png", size: Size2D(256, 256))
         XCTAssertThrowsError(try ProjectStore.sourceURL(source, in: UUID()))
     }
+
     func testImageCancellationRollsBackNewSources() async throws {
-        let source = try image { $0.setFillColor(UIColor.white.cgColor); $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256)) }
-        let original = try project(source); try ProjectStore.save(original)
+        let source = try image {
+            $0.setFillColor(UIColor.white.cgColor)
+            $0.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        }
+        let original = try project(source)
+        try ProjectStore.save(original)
         let url = try ProjectStore.sourceURL(original.images[0], in: original.id)
-        let task = Task { try await MediaWorker.shared.importImages([url], into: original, progress: { _, _ in }) }
+        let task = Task {
+            try await MediaWorker.shared.importImages([url], into: original, progress: { _, _ in })
+        }
         task.cancel()
-        do { _ = try await task.value; XCTFail("Cancellation must throw") } catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        do {
+            _ = try await task.value
+            XCTFail("Cancellation must throw")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
         let names = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
         XCTAssertEqual(names, [original.images[0].file])
     }
+
     func testVisionFindsEmailKeywordAndSplitAddressOnDevice() throws {
         let source = try image(width: 1000, height: 760) { context in
-            context.setFillColor(UIColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 760))
-            ("Email: alice@example.test" as NSString).draw(at: CGPoint(x: 70, y: 90), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
-            ("PRIVATE_MARKER" as NSString).draw(at: CGPoint(x: 70, y: 270), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
-            ("Home Address" as NSString).draw(at: CGPoint(x: 70, y: 450), withAttributes: [.font: UIFont.systemFont(ofSize: 38, weight: .semibold), .foregroundColor: UIColor.black])
-            ("1234 Market Street Apt 5B" as NSString).draw(at: CGPoint(x: 70, y: 550), withAttributes: [.font: UIFont.systemFont(ofSize: 38), .foregroundColor: UIColor.black])
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 1000, height: 760))
+            ("Email: alice@example.test" as NSString).draw(
+                at: CGPoint(x: 70, y: 90),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black]
+            )
+            ("PRIVATE_MARKER" as NSString).draw(
+                at: CGPoint(x: 70, y: 270),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black]
+            )
+            ("Home Address" as NSString).draw(
+                at: CGPoint(x: 70, y: 450),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 38, weight: .semibold), .foregroundColor: UIColor.black]
+            )
+            ("1234 Market Street Apt 5B" as NSString).draw(
+                at: CGPoint(x: 70, y: 550),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 38), .foregroundColor: UIColor.black]
+            )
         }
-        var p = try project(source); p.privacy.enabledKinds = [.email, .keyword, .address]; p.privacy.keywords = ["PRIVATE_MARKER"]
+        var p = try project(source)
+        p.privacy.enabledKinds = [.email, .keyword, .address]
+        p.privacy.keywords = ["PRIVATE_MARKER"]
         let report = try PrivacyScanner.scan(p, progress: { _, _ in })
         XCTAssertTrue(report.warnings.isEmpty)
         XCTAssertTrue(report.masks.contains { $0.kind == .email })
@@ -140,10 +285,13 @@ final class ImagingTests: XCTestCase {
         XCTAssertTrue(report.masks.contains { $0.kind == .address })
         XCTAssertTrue(report.masks.allSatisfy { $0.rect.isValid && $0.rect.intersection(.unit) == $0.rect })
         p.edit.masks = report.masks
-        XCTAssertFalse(String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self).contains("alice"))
-        XCTAssertFalse(String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self).contains("Market"))
+        let persisted = String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self)
+        XCTAssertFalse(persisted.contains("alice"))
+        XCTAssertFalse(persisted.contains("Market"))
     }
-    @MainActor func testQuickTwoScreenshotFlowRemovesFixedBrowserBarsWithoutChangingOverlap() async throws {
+
+    @MainActor
+    func testQuickTwoScreenshotFlowRemovesFixedBrowserBarsWithoutChangingOverlap() async throws {
         let width = 320
         let bodyHeight = 600
         let topBar = 50
@@ -151,51 +299,35 @@ final class ImagingTests: XCTestCase {
         let documentHeight = 950
         let secondOffset = 350
 
-        let document = try image(width: width, height: documentHeight) { context in
-            context.setFillColor(UIColor.white.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: width, height: documentHeight))
-            for y in stride(from: 0, to: documentHeight, by: 4) {
-                for x in stride(from: 0, to: width, by: 8) {
-                    let r = CGFloat((y * 17 + x * 31 + (y * x) % 97) % 255) / 255
-                    let g = CGFloat((y * 47 + x * 11 + 53) % 255) / 255
-                    let b = CGFloat((y * 7 + x * 61 + 101) % 255) / 255
-                    context.setFillColor(UIColor(red: r, green: g, blue: b, alpha: 1).cgColor)
-                    context.fill(CGRect(x: x, y: y, width: 8, height: 4))
-                }
-            }
-        }
+        let document = try makeScrollDocument(width: width, height: documentHeight)
+        let firstShot = try makeBrowserScreenshot(
+            document: document,
+            width: width,
+            bodyHeight: bodyHeight,
+            topBar: topBar,
+            bottomBar: bottomBar,
+            offset: 0,
+            changingClock: false
+        )
+        let secondShot = try makeBrowserScreenshot(
+            document: document,
+            width: width,
+            bodyHeight: bodyHeight,
+            topBar: topBar,
+            bottomBar: bottomBar,
+            offset: secondOffset,
+            changingClock: true
+        )
 
-        func screenshot(offset: Int, changingClock: Bool) throws -> CGImage {
-            try image(width: width, height: topBar + bodyHeight + bottomBar) { context in
-                context.setFillColor(UIColor(white: 0.10, alpha: 1).cgColor)
-                context.fill(CGRect(x: 0, y: 0, width: width, height: topBar))
-                context.setFillColor(UIColor(white: 0.92, alpha: 1).cgColor)
-                context.fill(CGRect(x: 100, y: 13, width: 120, height: 22))
-                if changingClock {
-                    context.setFillColor(UIColor.systemRed.cgColor)
-                    context.fill(CGRect(x: 12, y: 14, width: 28, height: 18))
-                }
-
-                context.saveGState()
-                context.clip(to: CGRect(x: 0, y: topBar, width: width, height: bodyHeight))
-                UIImage(cgImage: document).draw(at: CGPoint(x: 0, y: topBar - offset))
-                context.restoreGState()
-
-                context.setFillColor(UIColor(white: 0.88, alpha: 1).cgColor)
-                context.fill(CGRect(x: 0, y: topBar + bodyHeight, width: width, height: bottomBar))
-                context.setFillColor(UIColor(white: 0.35, alpha: 1).cgColor)
-                context.fill(CGRect(x: 42, y: topBar + bodyHeight + 20, width: 236, height: 18))
-            }
-        }
-
-        let firstURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(UUID().uuidString)-1.png")
-        let secondURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(UUID().uuidString)-2.png")
+        let token = UUID().uuidString
+        let firstURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(token)-1.png")
+        let secondURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(token)-2.png")
         defer {
             try? FileManager.default.removeItem(at: firstURL)
             try? FileManager.default.removeItem(at: secondURL)
         }
-        try ProjectStore.writeImage(try screenshot(offset: 0, changingClock: false), to: firstURL)
-        try ProjectStore.writeImage(try screenshot(offset: secondOffset, changingClock: true), to: secondURL)
+        try ProjectStore.writeImage(firstShot, to: firstURL)
+        try ProjectStore.writeImage(secondShot, to: secondURL)
 
         let draft = Project(title: "Quick regression", kind: .scroll)
         projects.append(draft.id)
@@ -209,22 +341,35 @@ final class ImagingTests: XCTestCase {
         }
 
         XCTAssertNil(session.notice, session.notice?.message ?? "")
-        XCTAssertTrue(session.note?.contains("清理检测到的固定状态栏") == true, session.note ?? "quick flow never finished")
+        XCTAssertTrue(
+            session.note?.contains("清理检测到的固定状态栏") == true,
+            session.note ?? "quick flow never finished"
+        )
         XCTAssertEqual(session.project.images.count, 2)
+
         let first = try XCTUnwrap(session.project.images.first)
         let last = try XCTUnwrap(session.project.images.last)
         let firstCrop = first.automaticCrop ?? first.crop
         let lastCrop = last.automaticCrop ?? last.crop
-        XCTAssertGreaterThan(firstCrop.y * first.size.height, 40)
-        XCTAssertGreaterThan((1 - lastCrop.maxY) * last.size.height, 50)
-        XCTAssertGreaterThan(last.leadingCut * lastCrop.height * last.size.height, 235)
-        XCTAssertLessThan(last.leadingCut * lastCrop.height * last.size.height, 265)
+        let firstTopRemoved = firstCrop.y * first.size.height
+        let lastBottomRemoved = (1 - lastCrop.maxY) * last.size.height
+        let overlapPixels = last.leadingCut * lastCrop.height * last.size.height
+
+        XCTAssertGreaterThan(firstTopRemoved, 40)
+        XCTAssertGreaterThan(lastBottomRemoved, 50)
+        XCTAssertGreaterThan(overlapPixels, 235)
+        XCTAssertLessThan(overlapPixels, 265)
 
         let composition = try Composition.build(session.project)
         XCTAssertEqual(composition.size.width, Double(width), accuracy: 0.5)
-        XCTAssertEqual(composition.size.height, Double(documentHeight), accuracy: 8,
-                       "Quick flow must remove outer browser bars without reintroducing overlap pixels")
+        XCTAssertEqual(
+            composition.size.height,
+            Double(documentHeight),
+            accuracy: 8,
+            "Quick flow must remove outer browser bars without reintroducing overlap pixels"
+        )
     }
+
     func testResidentialAddressHeuristics() {
         for value in [
             "上海市浦东新区张江镇祖冲之路1234弄5号楼2单元201室",
