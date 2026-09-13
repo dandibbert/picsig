@@ -53,6 +53,9 @@ final class WorkbenchViewModel {
     private(set) var composed: UIImage?
     private var manualOverlaps: [Int: Int] = [:]
 
+    /// Lowest confidence that still gets listed (unchecked) in the review panel.
+    static let listingConfidenceFloor = 0.45
+
     /// How many full resolution pixels one preview pixel stands for.
     var previewScale: CGFloat {
         guard let stitched, let previewBase, previewBase.size.width > 0 else { return 1 }
@@ -66,8 +69,9 @@ final class WorkbenchViewModel {
     var strokeColor: RGBAColor = .red
     var strokeWidth: Double = 0.006
     var fontSize: Double = 0.035
+    /// Font for the next text mark; `nil` is the system font.
+    var fontName: String?
     var isShapeFilled = false
-    var pendingText = ""
 
     // MARK: Redaction
 
@@ -97,7 +101,11 @@ final class WorkbenchViewModel {
 
     private var settings: AppSettings
     private var recomposeTask: Task<Void, Never>?
+    private var composeGeneration = 0
+    /// Ids of the annotations drawn into the current `composed` image.
+    private var composedAnnotationIDs: Set<UUID> = []
     private var adjustmentBaseline: ImageAdjustments?
+    private var editingAnnotationBaseline: Annotation?
     /// Bumped on every rebuild so results of a superseded stitch or scan can be
     /// dropped instead of being applied to a canvas they no longer describe.
     private var canvasGeneration = 0
@@ -291,17 +299,38 @@ final class WorkbenchViewModel {
         }
     }
 
+    /// Composes right away, skipping the debounce. For a finished stroke the
+    /// delay is pure latency: nothing else is coming.
+    func recomposeNow() {
+        recomposeTask?.cancel()
+        recomposeTask = Task { [weak self] in await self?.recompose() }
+    }
+
     func recompose() async {
         guard let base = previewBase else {
             composed = nil
+            composedAnnotationIDs = []
             return
         }
+        composeGeneration += 1
+        let generation = composeGeneration
         let box = ImageBox(base)
         let state = document.state
         let result = await Task.detached(priority: .userInitiated) { () -> ImageBox in
             ImageBox(ImageComposer.compose(base: box.image, state: state))
         }.value
+        // Two composes in flight finish in either order; a stale one must not
+        // paint over a newer state.
+        guard generation == composeGeneration else { return }
         composed = result.image
+        composedAnnotationIDs = Set(state.annotations.map(\.id))
+    }
+
+    /// Marks that exist in the document but are not yet baked into `composed`.
+    /// The canvas draws these itself so a new stroke never disappears for the
+    /// frame or two the compose takes.
+    var pendingAnnotations: [Annotation] {
+        document.state.annotations.filter { !composedAnnotationIDs.contains($0.id) }
     }
 
     // MARK: - Redaction
@@ -348,6 +377,11 @@ final class WorkbenchViewModel {
         // the image had never been read for it.
         var coordinator = settings.coordinator
         coordinator.scanSettings.enabledCategories = Set(SensitiveCategory.allCases)
+        // Likewise read a little below the confidence threshold: a bare name on a
+        // line or a number without its label is worth *listing*, unchecked, so the
+        // user can tick it — dropping it means they never learn it was there.
+        let threshold = settings.scan.minConfidence
+        coordinator.scanSettings.minConfidence = min(threshold, Self.listingConfidenceFloor)
         let preChecked = settings.scan.enabledCategories
         let result = await Task.detached(priority: .userInitiated) { () -> Result<RedactionCoordinator.ScanResult, Error> in
             do {
@@ -376,7 +410,9 @@ final class WorkbenchViewModel {
             layout = scan.layout
             matches = scan.matches.map { match in
                 var match = match
-                match.isEnabled = match.isEnabled && preChecked.contains(match.category)
+                match.isEnabled = match.isEnabled
+                    && preChecked.contains(match.category)
+                    && match.confidence >= threshold
                 return match
             }
             rebuildAutomaticRedactions()
@@ -535,8 +571,10 @@ final class WorkbenchViewModel {
     func apply(preset: RedactionPreset) {
         settings.apply(preset: preset)
         let enabled = settings.scan.enabledCategories
+        let threshold = settings.scan.minConfidence
         for index in matches.indices {
             matches[index].isEnabled = enabled.contains(matches[index].category)
+                && matches[index].confidence >= threshold
         }
         rebuildAutomaticRedactions()
     }
@@ -559,7 +597,7 @@ final class WorkbenchViewModel {
                                               valuePreview: NSLocalizedString("redaction.manual", comment: ""),
                                               sourceLineID: sourceLineID))
         audit = nil
-        scheduleRecompose()
+        recomposeNow()
     }
 
     func removeRedaction(_ id: UUID) {
@@ -571,7 +609,7 @@ final class WorkbenchViewModel {
             matches[index].isEnabled = false
         }
         audit = nil
-        scheduleRecompose()
+        recomposeNow()
     }
 
     var matchesByCategory: [(category: SensitiveCategory, matches: [SensitiveMatch])] {
@@ -627,32 +665,82 @@ final class WorkbenchViewModel {
 
     func commitAnnotation(_ annotation: Annotation) {
         document.add(annotation)
+        recomposeNow()
+    }
+
+    /// Changes one existing mark — width, colour, text, font — as one undo step.
+    func updateAnnotation(_ id: UUID, _ mutate: (inout Annotation) -> Void) {
+        guard document.updateAnnotation(id: id, mutate) else { return }
+        // The composed image still shows the old version, so until the new one
+        // lands the canvas must draw this mark itself.
+        composedAnnotationIDs.remove(id)
+        recomposeNow()
+    }
+
+    func annotation(_ id: UUID) -> Annotation? {
+        document.state.annotations.first { $0.id == id }
+    }
+
+    /// Editing an existing mark from the history sheet: every slider tick previews
+    /// live without touching the undo stack, and the whole edit becomes one undo
+    /// step when the sheet is dismissed with "done" — or vanishes on cancel.
+    func beginEditingAnnotation(_ id: UUID) {
+        guard editingAnnotationBaseline == nil else { return }
+        editingAnnotationBaseline = annotation(id)
+    }
+
+    func previewAnnotation(_ id: UUID, _ mutate: (inout Annotation) -> Void) {
+        document.previewChange { state in
+            guard let index = state.annotations.firstIndex(where: { $0.id == id }) else { return }
+            mutate(&state.annotations[index])
+        }
+        composedAnnotationIDs.remove(id)
         scheduleRecompose()
+    }
+
+    func endEditingAnnotation(_ id: UUID, commit: Bool) {
+        guard let baseline = editingAnnotationBaseline else { return }
+        editingAnnotationBaseline = nil
+        let edited = annotation(id)
+        document.previewChange { state in
+            guard let index = state.annotations.firstIndex(where: { $0.id == id }) else { return }
+            state.annotations[index] = baseline
+        }
+        if commit, let edited {
+            document.updateAnnotation(id: id) { $0 = edited }
+        }
+        composedAnnotationIDs.remove(id)
+        recomposeNow()
+    }
+
+    /// The topmost mark under a point, for tap-to-edit.
+    func annotation(at point: NormalizedPoint) -> Annotation? {
+        document.state.annotations.last { $0.hitTest(point, tolerance: 0.012) }
     }
 
     func undoLastStroke() {
         document.undoLastStroke()
-        scheduleRecompose()
+        recomposeNow()
     }
 
     func clearAnnotations() {
         document.clearAnnotations()
-        scheduleRecompose()
+        recomposeNow()
     }
 
     func removeAnnotation(_ id: UUID) {
         document.removeAnnotation(id: id)
-        scheduleRecompose()
+        recomposeNow()
     }
 
     func undo() {
         guard document.undo() else { return }
-        scheduleRecompose()
+        recomposeNow()
     }
 
     func redo() {
         guard document.redo() else { return }
-        scheduleRecompose()
+        recomposeNow()
     }
 
     /// Slider drags update the preview without touching the undo stack; the whole

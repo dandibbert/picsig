@@ -6,13 +6,27 @@ import PicSigCore
 /// Tone sliders update the preview continuously but only add one entry to the
 /// undo stack per gesture, which is why every one of them commits on release.
 struct AdjustPanel: View {
+    enum Section {
+        case all
+        case tone
+        case watermark
+    }
+
     let model: WorkbenchViewModel
+    var section: Section = .all
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            geometrySection
-            toneSection
-            watermarkSection
+            switch section {
+            case .all:
+                geometrySection
+                toneSection
+                watermarkSection
+            case .tone:
+                toneSection
+            case .watermark:
+                watermarkSection
+            }
         }
     }
 

@@ -96,11 +96,151 @@ struct ChipLabel: View {
             }
             Text(title)
                 .font(.caption.weight(.medium))
+                .lineLimit(1)
         }
+        // A chip that wraps its title onto two lines pushes every neighbour out
+        // of alignment; it must grow sideways instead.
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
         .background(isSelected ? Color.accentColor : Color(.tertiarySystemFill), in: Capsule())
         .foregroundStyle(isSelected ? Color.white : Color.primary)
+    }
+}
+
+/// One item in the bottom tool strip: an icon over a one-line caption, in a
+/// fixed width cell so a longer word in one language never shifts the row.
+struct StripButton: View {
+    enum Style {
+        case plain
+        case prominent
+    }
+
+    let title: LocalizedStringKey
+    let systemImage: String
+    var isSelected: Bool = false
+    var style: Style = .plain
+    var badge: Int? = nil
+    var isEnabled: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            StripItemLabel(title: title,
+                           systemImage: systemImage,
+                           isSelected: isSelected,
+                           style: style,
+                           badge: badge)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.4)
+        .accessibilityLabel(Text(title))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The look of a strip item, shared by buttons and menus.
+struct StripItemLabel: View {
+    let title: LocalizedStringKey
+    let systemImage: String
+    var isSelected: Bool = false
+    var style: StripButton.Style = .plain
+    var badge: Int? = nil
+    /// Draws the icon cell in this colour instead of the icon glyph — used for
+    /// the colour picker so the current colour is visible at a glance.
+    var swatch: Color? = nil
+
+    static let width: CGFloat = 62
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(cellFill)
+                    .frame(width: 44, height: 36)
+                if let swatch {
+                    Circle()
+                        .fill(swatch)
+                        .frame(width: 18, height: 18)
+                        .overlay { Circle().strokeBorder(Color(.separator), lineWidth: 0.5) }
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(iconColor)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let badge, badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.red, in: Capsule())
+                        .offset(x: 6, y: -5)
+                }
+            }
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        }
+        .frame(width: Self.width)
+        .contentShape(Rectangle())
+    }
+
+    private var cellFill: Color {
+        switch style {
+        case .prominent: return .accentColor
+        case .plain: return isSelected ? Color.accentColor.opacity(0.18) : Color(.tertiarySystemFill)
+        }
+    }
+
+    private var iconColor: Color {
+        switch style {
+        case .prominent: return .white
+        case .plain: return isSelected ? .accentColor : .primary
+        }
+    }
+}
+
+/// A detail sheet opened from the tool strip. Medium height by default with the
+/// canvas still live behind it, so a slider or a checkbox can be judged against
+/// the image without closing anything.
+struct DetailSheet<Content: View>: View {
+    let title: LocalizedStringKey
+    var detents: Set<PresentationDetent> = [.medium, .large]
+    var onDone: () -> Void = {}
+    @ViewBuilder let content: Content
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                content
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 20)
+            }
+            .scrollIndicators(.hidden)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("common.done") {
+                        onDone()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents(detents)
+        .presentationDragIndicator(.visible)
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .presentationContentInteraction(.scrolls)
     }
 }
 

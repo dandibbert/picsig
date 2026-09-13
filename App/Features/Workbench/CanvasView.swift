@@ -14,6 +14,9 @@ import PicSigCore
 /// be zoomed anywhere between that and several times the width.
 struct CanvasView: View {
     let model: WorkbenchViewModel
+    /// Sheets the canvas opens itself: the text editor for a new mark, and the
+    /// editor for a mark that was tapped.
+    @Binding var sheet: WorkbenchSheet?
 
     @Environment(\.displayScale) private var displayScale
 
@@ -23,9 +26,6 @@ struct CanvasView: View {
     @State private var strokePoints: [NormalizedPoint] = []
     @State private var dragStart: NormalizedPoint?
     @State private var dragCurrent: NormalizedPoint?
-    @State private var textPoint: NormalizedPoint?
-    @State private var textInput = ""
-    @State private var isTextPromptPresented = false
 
     private let maximumZoom: CGFloat = 8
 
@@ -53,11 +53,6 @@ struct CanvasView: View {
                 }
             }
         }
-        .alert("annotate.text.prompt", isPresented: $isTextPromptPresented) {
-            TextField("annotate.text.placeholder", text: $textInput)
-            Button("common.cancel", role: .cancel) { textInput = "" }
-            Button("common.done") { commitText() }
-        }
     }
 
     // MARK: - Content
@@ -77,6 +72,7 @@ struct CanvasView: View {
                 if model.activeTool == .textPick {
                     textBlockOverlay(size: contentSize)
                 }
+                pendingOverlay(size: contentSize)
                 inProgressOverlay(size: contentSize)
                 seamOverlay(size: contentSize)
             }
@@ -259,6 +255,18 @@ struct CanvasView: View {
         }
     }
 
+    /// Marks committed to the document but not yet in the composed bitmap. Drawn
+    /// with the same renderer the export uses, so the hand-off from "just drawn"
+    /// to "baked in" is invisible — no flash while the compose catches up.
+    @ViewBuilder
+    private func pendingOverlay(size: CGSize) -> some View {
+        let pending = model.pendingAnnotations
+        if !pending.isEmpty, size.width > 0, size.height > 0 {
+            PendingAnnotationsOverlay(annotations: pending, size: size, scale: displayScale)
+                .allowsHitTesting(false)
+        }
+    }
+
     private func inProgressOverlay(size: CGSize) -> some View {
         Canvas { context, _ in
             let tool = model.activeTool
@@ -350,7 +358,9 @@ struct CanvasView: View {
         case .textPick:
             model.toggleTextBlock(at: point)
         case .none:
-            toggleMatch(at: point)
+            if !toggleMatch(at: point), let hit = model.annotation(at: point) {
+                sheet = .editAnnotation(hit.id)
+            }
         default:
             break
         }
@@ -393,9 +403,7 @@ struct CanvasView: View {
                 case .annotation(let tool):
                     switch tool {
                     case .text:
-                        textPoint = point
-                        textInput = ""
-                        isTextPromptPresented = true
+                        sheet = .newText(point)
                     case .numberBadge:
                         model.commitAnnotation(Annotation(tool: .numberBadge,
                                                           points: [point],
@@ -442,23 +450,36 @@ struct CanvasView: View {
 
     /// Tapping a highlighted value in view mode turns its mask on or off, which is
     /// much faster than hunting for the row in the list.
-    private func toggleMatch(at point: NormalizedPoint) {
+    @discardableResult
+    private func toggleMatch(at point: NormalizedPoint) -> Bool {
+        guard model.highlightsMatches else { return false }
         let hit = model.matches.first { match in
             match.box.expanded(byX: 0.004, byY: 0.004)
                 .intersects(NormalizedRect(x: point.x, y: point.y, width: 0.0005, height: 0.0005))
         }
-        guard let hit else { return }
+        guard let hit else { return false }
         model.setMatch(hit.id, enabled: !hit.isEnabled)
+        return true
+    }
+}
+
+/// Rasterises a handful of annotations at screen size with `AnnotationRenderer`.
+private struct PendingAnnotationsOverlay: View {
+    let annotations: [Annotation]
+    let size: CGSize
+    let scale: CGFloat
+
+    var body: some View {
+        Image(uiImage: render())
+            .frame(width: size.width, height: size.height)
     }
 
-    private func commitText() {
-        defer { textInput = "" }
-        guard let point = textPoint, !textInput.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        model.commitAnnotation(Annotation(tool: .text,
-                                          points: [point],
-                                          color: model.strokeColor,
-                                          lineWidth: model.strokeWidth,
-                                          text: textInput,
-                                          fontSize: model.fontSize))
+    private func render() -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            AnnotationRenderer.draw(annotations: annotations, in: size, context: context)
+        }
     }
 }

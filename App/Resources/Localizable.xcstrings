@@ -358,6 +358,23 @@
         }
       }
     },
+    "annotate.color": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "颜色"
+          }
+        }
+      }
+    },
     "annotate.empty": {
       "extractionState": "manual",
       "localizations": {
@@ -392,6 +409,23 @@
         }
       }
     },
+    "annotate.font": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Font"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "字体"
+          }
+        }
+      }
+    },
     "annotate.fontSize": {
       "extractionState": "manual",
       "localizations": {
@@ -405,6 +439,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "字号"
+          }
+        }
+      }
+    },
+    "annotate.history.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap a mark to change its color, width, text or font."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击一条标注可修改颜色、粗细、文字或字体。"
+          }
+        }
+      }
+    },
+    "annotate.missing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This mark has been removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这条标注已被删除"
+          }
+        }
+      }
+    },
+    "annotate.outline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Outline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "描边"
           }
         }
       }
@@ -490,6 +575,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "文字内容"
+          }
+        }
+      }
+    },
+    "annotate.text.preview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览"
           }
         }
       }
@@ -694,6 +796,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "保存"
+          }
+        }
+      }
+    },
+    "common.settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置"
           }
         }
       }
@@ -1153,6 +1272,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "像素打了码却把原始定位一起发出去，等于没打。"
+          }
+        }
+      }
+    },
+    "font.installed.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fonts installed through a configuration profile or Settings › General › Fonts appear here automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过描述文件或「设置 › 通用 › 字体」安装的第三方字体会自动出现在这里。"
+          }
+        }
+      }
+    },
+    "font.search": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search fonts"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索字体"
+          }
+        }
+      }
+    },
+    "font.section.all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Fonts"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部字体"
+          }
+        }
+      }
+    },
+    "font.section.installed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed Fonts"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已安装的字体"
+          }
+        }
+      }
+    },
+    "font.section.system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统自带"
+          }
+        }
+      }
+    },
+    "font.system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System Font"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统字体"
           }
         }
       }
@@ -2037,6 +2258,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "复核"
+          }
+        }
+      }
+    },
+    "redact.sheet.results": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Results"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "识别结果"
           }
         }
       }
@@ -4149,6 +4387,23 @@
         }
       }
     },
+    "stitch.sheet.settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stitch Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拼接设置"
+          }
+        }
+      }
+    },
     "stitch.showSeams": {
       "extractionState": "manual",
       "localizations": {
@@ -4162,6 +4417,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "显示接缝"
+          }
+        }
+      }
+    },
+    "stitch.showSeams.short": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seams"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接缝"
           }
         }
       }

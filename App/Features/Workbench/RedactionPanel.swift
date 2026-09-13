@@ -5,10 +5,9 @@ import PicSigCore
 /// Review and tune the masking.
 ///
 /// One pass reads the whole image; everything it found is listed with a checkbox,
-/// and the user decides what stays masked. The two hand tools — tap a line of text,
-/// or draw a box — sit next to the scan button because they are the fallback for
-/// whatever the scan did not catch. Presets and per-category rules are still
-/// there, but under "advanced": they are defaults, not the workflow.
+/// and the user decides what stays masked. Scanning and the two hand tools live
+/// in the tool strip; this sheet is the review. Presets and per-category rules
+/// are still there, but under "advanced": they are defaults, not the workflow.
 struct RedactionPanel: View {
     let model: WorkbenchViewModel
 
@@ -17,64 +16,12 @@ struct RedactionPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            primaryRow
             summaryRow
             if model.needsRescan { rescanNotice }
             if !model.matches.isEmpty { foundSection }
             manualItemsSection
             verificationSection
             advancedSection
-        }
-    }
-
-    // MARK: - Primary actions
-
-    private var primaryRow: some View {
-        HStack(spacing: 8) {
-            Button {
-                Task { await model.scanForSensitiveInformation() }
-            } label: {
-                Label(model.hasScannedOnce ? "redact.rescan" : "redact.scan",
-                      systemImage: "sparkle.magnifyingglass")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .disabled(model.isScanning || model.isBusy)
-
-            ChipButton(title: "redact.pickText",
-                       systemImage: "text.viewfinder",
-                       isSelected: model.activeTool == .textPick) {
-                Task { await model.startTextPicking() }
-            }
-            ChipButton(title: "redact.drawBox",
-                       systemImage: "rectangle.dashed",
-                       isSelected: model.activeTool == .redactionBox) {
-                model.activeTool = model.activeTool == .redactionBox ? .none : .redactionBox
-            }
-            Spacer(minLength: 0)
-            styleMenu
-        }
-        .padding(.top, 2)
-    }
-
-    /// Default mask style, applied to hand drawn and tapped areas and offered as the
-    /// bulk choice for everything found.
-    private var styleMenu: some View {
-        Menu {
-            ForEach(RedactionStyle.allCases, id: \.self) { style in
-                Button {
-                    model.setDefaultMaskingStyle(style)
-                    model.setStyleForAllCategories(style)
-                } label: {
-                    Label(LocalizedStringKey(style.localizationKey),
-                          systemImage: model.defaultMaskingStyle == style ? "checkmark" : "circle")
-                }
-            }
-        } label: {
-            ChipLabel(title: LocalizedStringKey(model.defaultMaskingStyle.localizationKey),
-                      systemImage: "paintbrush")
         }
     }
 
@@ -93,18 +40,12 @@ struct RedactionPanel: View {
             if !model.matches.isEmpty {
                 Button("redact.enableAll") { model.enableAllMatches(true) }
                 Button("redact.disableAll") { model.enableAllMatches(false) }
-                Toggle(isOn: Binding(get: { model.highlightsMatches },
-                                     set: { model.highlightsMatches = $0 })) {
-                    Image(systemName: "eye")
-                }
-                .toggleStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .accessibilityLabel("redact.highlight")
             }
         }
         .font(.caption)
+        .lineLimit(1)
         .buttonStyle(.borderless)
+        .padding(.top, 8)
     }
 
     private var summaryText: String {
@@ -248,6 +189,7 @@ private struct CategoryRow: View {
             SeverityDot(severity: category.severity)
             Text(LocalizedStringKey(category.localizationKey))
                 .font(.subheadline.weight(.medium))
+                .lineLimit(1)
             Text("\(matches.count)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -256,6 +198,8 @@ private struct CategoryRow: View {
                 Label(LocalizedStringKey(model.rule(for: category).style.localizationKey),
                       systemImage: "paintbrush")
                     .font(.caption2)
+                    .lineLimit(1)
+                    .fixedSize()
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.bordered)

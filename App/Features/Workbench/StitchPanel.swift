@@ -6,6 +6,8 @@ import PicSigCore
 /// the collage settings for the manual layouts.
 struct StitchPanel: View {
     let model: WorkbenchViewModel
+    /// The strip has its own sources sheet; the settings sheet leaves them out.
+    var showsSources = true
 
     /// Sliders here rebuild the entire canvas, so they edit a draft and only
     /// commit when the finger lifts.
@@ -28,7 +30,7 @@ struct StitchPanel: View {
             case .manual: manualSection
             }
             canvasSection
-            sourceSection
+            if showsSources { sourceSection }
         }
     }
 
