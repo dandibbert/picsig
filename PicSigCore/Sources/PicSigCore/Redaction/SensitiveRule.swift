@@ -19,6 +19,9 @@ public struct SensitiveRule: Identifiable {
     public let requiresContext: Bool
     /// Optional checksum / plausibility check applied to the captured value.
     public let validate: (@Sendable (String) -> Bool)?
+    /// Optional per-value shift of `baseConfidence`, for rules whose pattern
+    /// cannot tell a likely value from an unlikely one (names, addresses).
+    public let confidenceAdjustment: (@Sendable (String) -> Double)?
     /// Whether the rule participates once its category is enabled. `false` marks
     /// rules that are noisy even inside their own category and have to be turned
     /// on explicitly; whether a whole category is on is a separate switch.
@@ -33,7 +36,8 @@ public struct SensitiveRule: Identifiable {
                 contextBoost: Double = 0.2,
                 requiresContext: Bool = false,
                 isEnabledByDefault: Bool = true,
-                validate: (@Sendable (String) -> Bool)? = nil) {
+                validate: (@Sendable (String) -> Bool)? = nil,
+                confidenceAdjustment: (@Sendable (String) -> Double)? = nil) {
         self.id = id
         self.category = category
         self.pattern = pattern
@@ -44,6 +48,7 @@ public struct SensitiveRule: Identifiable {
         self.requiresContext = requiresContext
         self.isEnabledByDefault = isEnabledByDefault
         self.validate = validate
+        self.confidenceAdjustment = confidenceAdjustment
     }
 }
 

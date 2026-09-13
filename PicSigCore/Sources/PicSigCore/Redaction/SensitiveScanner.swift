@@ -144,6 +144,9 @@ public final class SensitiveScanner: @unchecked Sendable {
             let characterRange = lower..<upper
 
             var confidence = entry.rule.baseConfidence
+            if let adjust = entry.rule.confidenceAdjustment {
+                confidence += adjust(value)
+            }
             var contextLabel: String?
             if self.settings.useContext {
                 let keywords = entry.rule.contextKeywords.isEmpty

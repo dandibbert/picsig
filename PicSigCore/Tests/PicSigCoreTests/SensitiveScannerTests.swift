@@ -81,12 +81,31 @@ final class SensitiveScannerTests: XCTestCase {
         XCTAssertTrue(scan("房号 8321").isEmpty)
     }
 
-    func testNameOnlyMatchesWithNearbyLabel() {
+    func testLabelRaisesANameWellAboveTheThreshold() {
         let withLabel = scan("收件人 张伟")
         XCTAssertEqual(withLabel.map(\.category), [.personName])
         XCTAssertEqual(withLabel.first?.value, "张伟")
+        XCTAssertGreaterThan(withLabel.first?.confidence ?? 0, 0.85)
+    }
 
-        XCTAssertTrue(scan("张伟").isEmpty, "a bare name is below the default confidence")
+    func testStandaloneNamesAreFoundWithoutAnyLabel() {
+        for name in ["张伟", "王小明", "陈志强", "欧阳娜娜", "李婷婷", "刘德华"] {
+            let matches = scan(name)
+            XCTAssertEqual(matches.map(\.value), [name], name)
+            XCTAssertGreaterThanOrEqual(matches.first?.confidence ?? 0, 0.6, name)
+        }
+        // Inside a chat line, next to a timestamp.
+        XCTAssertEqual(scan("王小明 14:32").map(\.value), ["王小明"])
+        // Standing in a table cell next to other fields.
+        XCTAssertEqual(scan("张伟 | 男 | 32").filter { $0.category == .personName }.map(\.value), ["张伟"])
+    }
+
+    func testEverydayWordsThatStartWithASurnameAreNotNames() {
+        let relaxed = ScanSettings(minConfidence: 0.45)
+        for word in ["全部", "时间", "余额", "任务", "关闭", "查看", "相册", "安全", "高级", "金额",
+                     "方案", "成功", "明天", "设置", "确认", "云南省", "华为", "石头", "路线", "文件"] {
+            XCTAssertTrue(scan(word, settings: relaxed).isEmpty, word)
+        }
     }
 
     /// Vision reports most real lines at confidence 0.5. That used to halve every
@@ -116,13 +135,13 @@ final class SensitiveScannerTests: XCTestCase {
         XCTAssertEqual(scan("王总说可以").map(\.value), ["王总"])
     }
 
-    func testBareNameLineIsListedOnlyBelowTheDefaultThreshold() {
-        XCTAssertTrue(scan("张伟").isEmpty)
-        let relaxed = ScanSettings(minConfidence: 0.45)
-        let matches = scan("张伟", settings: relaxed)
-        XCTAssertEqual(matches.map(\.value), ["张伟"])
-        XCTAssertLessThan(matches.first?.confidence ?? 1, 0.6, "a bare name must start unchecked")
-        XCTAssertTrue(scan("设置", settings: relaxed).isEmpty, "UI words without a surname are not names")
+    func testUncertainTokensAreListedBelowTheThresholdOnly() {
+        // A rare surname with plain characters: plausible, not convincing.
+        let token = "巢中华"
+        XCTAssertTrue(scan(token).isEmpty)
+        let listed = scan(token, settings: ScanSettings(minConfidence: 0.45))
+        XCTAssertEqual(listed.map(\.value), [token])
+        XCTAssertLessThan(listed.first?.confidence ?? 1, 0.6, "must start unchecked")
     }
 
     func testAddressesWithoutProvinceOrWithOCRSpaces() {

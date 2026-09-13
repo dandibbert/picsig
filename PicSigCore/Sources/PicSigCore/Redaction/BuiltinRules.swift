@@ -152,23 +152,18 @@ public enum BuiltinRules {
                       baseConfidence: 0.7,
                       contextKeywords: ContextKeywords.personName,
                       contextBoost: 0.2),
+        // A surname-led token standing on its own: a chat sender, a contact row,
+        // a signature, a name in a table cell. The pattern alone cannot separate
+        // "王小明" from "高级", so the heuristics move the confidence per value:
+        // a textbook name clears the threshold by itself, a word drops below the
+        // listing floor, and the in-between is listed unchecked for the user.
         SensitiveRule(id: "name.cn",
                       category: .personName,
                       pattern: "(?<![\\u4e00-\\u9fa5])\(surnameGroup)[\\u4e00-\\u9fa5]{1,3}(?![\\u4e00-\\u9fa5])",
                       baseConfidence: 0.42,
                       contextKeywords: ContextKeywords.personName,
-                      contextBoost: 0.4),
-        // A line that is nothing but a plausible name — a chat sender, a contact
-        // row, a signature. Too weak to mask on its own, but with the review list
-        // pre-checking only what clears the threshold, it is worth listing so the
-        // user can tick it: below the default threshold it never shows at all.
-        SensitiveRule(id: "name.cn.line",
-                      category: .personName,
-                      pattern: "^\\s*(\(surnameGroup)[\\u4e00-\\u9fa5]{1,2})\\s*$",
-                      captureGroup: 1,
-                      baseConfidence: 0.5,
-                      contextKeywords: ContextKeywords.personName,
-                      contextBoost: 0.35),
+                      contextBoost: 0.4,
+                      confidenceAdjustment: { ChineseNameHeuristics.confidenceAdjustment(for: $0) }),
         SensitiveRule(id: "name.cn.masked",
                       category: .personName,
                       pattern: "(?<![\\u4e00-\\u9fa5])[\\u4e00-\\u9fa5][*\\u2217]{1,2}(?![\\u4e00-\\u9fa5])",
