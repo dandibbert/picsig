@@ -86,32 +86,38 @@ enum SyntheticScreenshot {
     }
 
     /// Two screenshots that overlap horizontally, for the horizontal stitch path.
-    /// Content is spread across the width so there is something for column matching
-    /// to lock onto.
+    ///
+    /// The content is a deterministic scatter of vertical bars rather than evenly
+    /// spaced text. Regularly spaced marks give every column the same signature, and a
+    /// page like that genuinely has several equally good alignments — the ambiguity
+    /// would be the fixture's fault, not the planner's.
     static func horizontalPair(width: CGFloat = 900,
-                               overlap: CGFloat = 300) -> (first: UIImage, second: UIImage) {
+                               overlap: CGFloat = 300) -> (first: UIImage, second: UIImage, fullWidth: Int) {
         let fullWidth = width * 2 - overlap
         let height: CGFloat = 320
         let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 1
         format.opaque = true
 
+        var seed: UInt64 = 0x5DEECE66D
+        func nextUnit() -> CGFloat {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return CGFloat((seed >> 33) % 1000) / 1000
+        }
+
         let full = UIGraphicsImageRenderer(size: CGSize(width: fullWidth, height: height), format: format)
             .image { context in
                 UIColor.white.setFill()
                 context.fill(CGRect(x: 0, y: 0, width: fullWidth, height: height))
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 30),
-                    .foregroundColor: UIColor.black
-                ]
-                // A column of markers every 150pt, so any horizontal offset is visible.
-                var x: CGFloat = 20
-                var index = 1
-                while x < fullWidth - 120 {
-                    (marker(index) as NSString).draw(at: CGPoint(x: x, y: 60), withAttributes: attributes)
-                    (marker(index + 50) as NSString).draw(at: CGPoint(x: x, y: 190), withAttributes: attributes)
-                    x += 150
-                    index += 1
+
+                var x: CGFloat = 4
+                while x < fullWidth - 12 {
+                    let barWidth = 2 + nextUnit() * 7
+                    let top = nextUnit() * height * 0.4
+                    let barHeight = height * (0.3 + nextUnit() * 0.6) - top
+                    UIColor(white: nextUnit() * 0.5, alpha: 1).setFill()
+                    context.fill(CGRect(x: x, y: top, width: barWidth, height: max(8, barHeight)))
+                    x += barWidth + 2 + nextUnit() * 10
                 }
             }
 
@@ -121,6 +127,6 @@ enum SyntheticScreenshot {
             return UIImage(cgImage: cropped)
         }
 
-        return (slice(left: 0), slice(left: fullWidth - width))
+        return (slice(left: 0), slice(left: fullWidth - width), Int(fullWidth))
     }
 }

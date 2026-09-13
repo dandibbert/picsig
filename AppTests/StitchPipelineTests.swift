@@ -62,10 +62,10 @@ final class StitchPipelineTests: XCTestCase {
         let plan = ScrollStitchPlanner.plan(images: try grays(sources), options: options)
         let rendered = try XCTUnwrap(StitchRenderer.render(plan: plan, sources: sources))
 
-        let text = try recognisedText(in: rendered)
+        let text = normalised(try recognisedText(in: rendered))
         var lastPosition = text.startIndex
         for index in 1...pair.rowCount {
-            let marker = SyntheticScreenshot.marker(index)
+            let marker = normalised(SyntheticScreenshot.marker(index))
             let occurrences = text.components(separatedBy: marker).count - 1
             XCTAssertEqual(occurrences, 1,
                            "row \(index) appears \(occurrences) times instead of once:\n\(text)")
@@ -106,13 +106,14 @@ final class StitchPipelineTests: XCTestCase {
         let plan = ScrollStitchPlanner.plan(images: try grays(sources), options: options)
 
         XCTAssertEqual(plan.axis, .horizontal)
-        XCTAssertGreaterThan(plan.canvasSize.width, sources[0].width,
-                             "a horizontal stitch did not get wider")
-        XCTAssertLessThan(plan.canvasSize.width, sources[0].width + sources[1].width,
-                          "no horizontal overlap was removed")
         XCTAssertEqual(plan.canvasSize.height, sources[0].height,
                        "a horizontal stitch changed the height")
         XCTAssertTrue(plan.validate(sourceSizes: sources.map(\.pixelSize)).isEmpty)
+
+        // The fixture overlaps by a known amount, so the recovered width is checkable
+        // rather than merely "wider than one input".
+        XCTAssertEqual(plan.canvasSize.width, pair.fullWidth, accuracy: 4,
+                       "the horizontal overlap was not recovered")
     }
 
     private func recognisedText(in image: UIImage) throws -> String {
@@ -120,5 +121,11 @@ final class StitchPipelineTests: XCTestCase {
         service.options.tileHeight = 4000
         service.options.computesCharacterBoxes = false
         return try service.recognize(cgImage: try XCTUnwrap(image.cgImage)).plainText
+    }
+
+    /// Vision returns fullwidth brackets when a marker sits next to Chinese text, so
+    /// both sides are reduced to letters and digits before they are compared.
+    private func normalised(_ text: String) -> String {
+        text.filter { $0.isLetter || $0.isNumber }
     }
 }
