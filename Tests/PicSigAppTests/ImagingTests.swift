@@ -124,20 +124,106 @@ final class ImagingTests: XCTestCase {
         let names = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
         XCTAssertEqual(names, [original.images[0].file])
     }
-    func testVisionFindsEmailAndLiteralKeywordOnDevice() throws {
-        let source = try image(width: 1000, height: 600) { context in
-            context.setFillColor(UIColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 600))
-            ("Email: alice@example.test" as NSString).draw(at: CGPoint(x: 70, y: 110), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
-            ("PRIVATE_MARKER" as NSString).draw(at: CGPoint(x: 70, y: 310), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
+    func testVisionFindsEmailKeywordAndSplitAddressOnDevice() throws {
+        let source = try image(width: 1000, height: 760) { context in
+            context.setFillColor(UIColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 760))
+            ("Email: alice@example.test" as NSString).draw(at: CGPoint(x: 70, y: 90), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
+            ("PRIVATE_MARKER" as NSString).draw(at: CGPoint(x: 70, y: 270), withAttributes: [.font: UIFont.systemFont(ofSize: 42), .foregroundColor: UIColor.black])
+            ("Home Address" as NSString).draw(at: CGPoint(x: 70, y: 450), withAttributes: [.font: UIFont.systemFont(ofSize: 38, weight: .semibold), .foregroundColor: UIColor.black])
+            ("1234 Market Street Apt 5B" as NSString).draw(at: CGPoint(x: 70, y: 550), withAttributes: [.font: UIFont.systemFont(ofSize: 38), .foregroundColor: UIColor.black])
         }
-        var p = try project(source); p.privacy.enabledKinds = [.email, .keyword]; p.privacy.keywords = ["PRIVATE_MARKER"]
+        var p = try project(source); p.privacy.enabledKinds = [.email, .keyword, .address]; p.privacy.keywords = ["PRIVATE_MARKER"]
         let report = try PrivacyScanner.scan(p, progress: { _, _ in })
         XCTAssertTrue(report.warnings.isEmpty)
         XCTAssertTrue(report.masks.contains { $0.kind == .email })
         XCTAssertTrue(report.masks.contains { $0.kind == .keyword })
+        XCTAssertTrue(report.masks.contains { $0.kind == .address })
         XCTAssertTrue(report.masks.allSatisfy { $0.rect.isValid && $0.rect.intersection(.unit) == $0.rect })
         p.edit.masks = report.masks
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self).contains("alice"))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(p.edit), as: UTF8.self).contains("Market"))
+    }
+    @MainActor func testQuickTwoScreenshotFlowRemovesFixedBrowserBarsWithoutChangingOverlap() async throws {
+        let width = 320
+        let bodyHeight = 600
+        let topBar = 50
+        let bottomBar = 60
+        let documentHeight = 950
+        let secondOffset = 350
+
+        let document = try image(width: width, height: documentHeight) { context in
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: documentHeight))
+            for y in stride(from: 0, to: documentHeight, by: 4) {
+                for x in stride(from: 0, to: width, by: 8) {
+                    let r = CGFloat((y * 17 + x * 31 + (y * x) % 97) % 255) / 255
+                    let g = CGFloat((y * 47 + x * 11 + 53) % 255) / 255
+                    let b = CGFloat((y * 7 + x * 61 + 101) % 255) / 255
+                    context.setFillColor(UIColor(red: r, green: g, blue: b, alpha: 1).cgColor)
+                    context.fill(CGRect(x: x, y: y, width: 8, height: 4))
+                }
+            }
+        }
+
+        func screenshot(offset: Int, changingClock: Bool) throws -> CGImage {
+            try image(width: width, height: topBar + bodyHeight + bottomBar) { context in
+                context.setFillColor(UIColor(white: 0.10, alpha: 1).cgColor)
+                context.fill(CGRect(x: 0, y: 0, width: width, height: topBar))
+                context.setFillColor(UIColor(white: 0.92, alpha: 1).cgColor)
+                context.fill(CGRect(x: 100, y: 13, width: 120, height: 22))
+                if changingClock {
+                    context.setFillColor(UIColor.systemRed.cgColor)
+                    context.fill(CGRect(x: 12, y: 14, width: 28, height: 18))
+                }
+
+                context.saveGState()
+                context.clip(to: CGRect(x: 0, y: topBar, width: width, height: bodyHeight))
+                UIImage(cgImage: document).draw(at: CGPoint(x: 0, y: topBar - offset))
+                context.restoreGState()
+
+                context.setFillColor(UIColor(white: 0.88, alpha: 1).cgColor)
+                context.fill(CGRect(x: 0, y: topBar + bodyHeight, width: width, height: bottomBar))
+                context.setFillColor(UIColor(white: 0.35, alpha: 1).cgColor)
+                context.fill(CGRect(x: 42, y: topBar + bodyHeight + 20, width: 236, height: 18))
+            }
+        }
+
+        let firstURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(UUID().uuidString)-1.png")
+        let secondURL = FileManager.default.temporaryDirectory.appendingPathComponent("picsig-quick-\(UUID().uuidString)-2.png")
+        defer {
+            try? FileManager.default.removeItem(at: firstURL)
+            try? FileManager.default.removeItem(at: secondURL)
+        }
+        try ProjectStore.writeImage(try screenshot(offset: 0, changingClock: false), to: firstURL)
+        try ProjectStore.writeImage(try screenshot(offset: secondOffset, changingClock: true), to: secondURL)
+
+        let draft = Project(title: "Quick regression", kind: .scroll)
+        projects.append(draft.id)
+        let session = StudioSession(project: draft)
+        session.quickImport([firstURL, secondURL], finishInEditor: false)
+
+        let deadline = Date().addingTimeInterval(120)
+        while Date() < deadline {
+            if !session.busy, session.note?.contains("已自动拼接") == true { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        XCTAssertNil(session.notice, session.notice?.message ?? "")
+        XCTAssertTrue(session.note?.contains("清理检测到的固定状态栏") == true, session.note ?? "quick flow never finished")
+        XCTAssertEqual(session.project.images.count, 2)
+        let first = try XCTUnwrap(session.project.images.first)
+        let last = try XCTUnwrap(session.project.images.last)
+        let firstCrop = first.automaticCrop ?? first.crop
+        let lastCrop = last.automaticCrop ?? last.crop
+        XCTAssertGreaterThan(firstCrop.y * first.size.height, 40)
+        XCTAssertGreaterThan((1 - lastCrop.maxY) * last.size.height, 50)
+        XCTAssertGreaterThan(last.leadingCut * lastCrop.height * last.size.height, 235)
+        XCTAssertLessThan(last.leadingCut * lastCrop.height * last.size.height, 265)
+
+        let composition = try Composition.build(session.project)
+        XCTAssertEqual(composition.size.width, Double(width), accuracy: 0.5)
+        XCTAssertEqual(composition.size.height, Double(documentHeight), accuracy: 8,
+                       "Quick flow must remove outer browser bars without reintroducing overlap pixels")
     }
     func testResidentialAddressHeuristics() {
         for value in [
