@@ -91,8 +91,16 @@ final class ImagingTests: XCTestCase {
             let decoded = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
             let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [CFString: Any])
             XCTAssertNil(properties[kCGImagePropertyGPSDictionary])
-            XCTAssertNil(properties[kCGImagePropertyExifDictionary])
             XCTAssertNil(properties[kCGImagePropertyIPTCDictionary])
+            // ImageIO may synthesize an EXIF dictionary containing only output pixel dimensions.
+            // Reject source-derived fields instead of treating those structural dimensions as leakage.
+            let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+            XCTAssertNil(exif?[kCGImagePropertyExifDateTimeOriginal])
+            XCTAssertNil(exif?[kCGImagePropertyExifDateTimeDigitized])
+            XCTAssertNil(exif?[kCGImagePropertyExifUserComment])
+            XCTAssertNil(exif?[kCGImagePropertyExifLensModel])
+            XCTAssertNil(exif?[kCGImagePropertyExifBodySerialNumber])
+            XCTAssertNil(exif?[kCGImagePropertyExifMakerNote])
             XCTAssertEqual(CGImageSourceGetCount(decoded), 1)
         }
     }
