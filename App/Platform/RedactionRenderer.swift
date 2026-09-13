@@ -81,16 +81,13 @@ enum RedactionRenderer {
         let columns = max(1, Int(rect.width) / block)
         let rows = max(1, Int(rect.height) / block)
 
-        // Downsample with no interpolation, then scale back up the same way: the
-        // result contains only `columns * rows` distinct colours.
-        let smallFormat = UIGraphicsImageRendererFormat.preferred()
-        smallFormat.scale = 1
-        smallFormat.opaque = true
-        let small = UIGraphicsImageRenderer(size: CGSize(width: columns, height: rows), format: smallFormat)
-            .image { smallContext in
-                smallContext.cgContext.interpolationQuality = .medium
-                UIImage(cgImage: cropped).draw(in: CGRect(x: 0, y: 0, width: columns, height: rows))
-            }
+        // Shrink with the high quality filter, in two steps, so every block is the
+        // *average* of the pixels it replaces — a single medium quality pass
+        // point-sampled at this ratio and turned black-on-white text into near
+        // black blocks. Then scale back up with no interpolation, so the result
+        // contains only `columns * rows` distinct colours.
+        let halfway = resampled(UIImage(cgImage: cropped), to: CGSize(width: columns * 2, height: rows * 2))
+        let small = resampled(halfway, to: CGSize(width: columns, height: rows))
 
         context.cgContext.saveGState()
         context.cgContext.interpolationQuality = .none
@@ -186,16 +183,6 @@ enum RedactionRenderer {
         let full = CGSize(width: image.width, height: image.height)
         guard full.width >= 1, full.height >= 1, radius > 0 else { return nil }
 
-        let format = UIGraphicsImageRendererFormat.preferred()
-        format.scale = 1
-        format.opaque = true
-
-        func resample(_ source: UIImage, to size: CGSize) -> UIImage {
-            UIGraphicsImageRenderer(size: size, format: format).image { context in
-                context.cgContext.interpolationQuality = .high
-                source.draw(in: CGRect(origin: .zero, size: size))
-            }
-        }
         func shrunk(_ size: CGSize, by factor: CGFloat) -> CGSize {
             CGSize(width: max(1, (size.width / factor).rounded(.up)),
                    height: max(1, (size.height / factor).rounded(.up)))
@@ -207,9 +194,21 @@ enum RedactionRenderer {
 
         // Two passes: a single shrink is a box average whose footprint shows as a
         // faint grid when scaled back up; averaging the average rounds it off.
-        let first = resample(UIImage(cgImage: image), to: small)
-        let second = resample(resample(first, to: tiny), to: small)
-        return resample(second, to: full)
+        let first = resampled(UIImage(cgImage: image), to: small)
+        let second = resampled(resampled(first, to: tiny), to: small)
+        return resampled(second, to: full)
+    }
+
+    /// Draws `source` at `size` with the high quality filter, which averages when
+    /// shrinking and interpolates bicubically when enlarging.
+    private static func resampled(_ source: UIImage, to size: CGSize) -> UIImage {
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            context.cgContext.interpolationQuality = .high
+            source.draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 
     private static func drawSolid(rect: CGRect, context: UIGraphicsImageRendererContext) {
