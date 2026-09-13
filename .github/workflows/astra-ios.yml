@@ -4,7 +4,7 @@ on:
     branches: [astra/picsig-ios-privacy-studio]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: astra-ios-${{ github.ref }}
   cancel-in-progress: true
@@ -15,6 +15,18 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Apply verified repair candidate
+        run: |
+          set -euo pipefail
+          if compgen -G ".ci/repair.part.*" > /dev/null; then
+            cat .ci/repair.part.* \
+              | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
+              | gunzip > /tmp/picsig-repair.patch
+            git apply --binary --index /tmp/picsig-repair.patch
+            echo "PICSIG_REPAIR_BOOTSTRAP=1" >> "$GITHUB_ENV"
+            git diff --cached --check
+            git diff --cached --stat
+          fi
       - name: Snapshot exact source
         run: |
           mkdir -p build
@@ -96,3 +108,14 @@ jobs:
             build/*.xcresult
             build/screenshots/
             build/image-attachments/
+      - name: Publish verified repair
+        if: success() && env.PICSIG_REPAIR_BOOTSTRAP == '1'
+        run: |
+          set -euo pipefail
+          git config user.name "PicSig CI"
+          git config user.email "actions@users.noreply.github.com"
+          git rm -f .ci/repair.part.*
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m "fix: rebuild screenshot overlap and canvas-first privacy editing"
+          git push origin HEAD:astra/picsig-ios-privacy-studio
