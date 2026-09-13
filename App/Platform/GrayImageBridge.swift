@@ -69,6 +69,11 @@ extension PixelSize {
     var cgSize: CGSize { CGSize(width: CGFloat(width), height: CGFloat(height)) }
 }
 
+/// Vision gained its own `NormalizedRect` in iOS 18, so the bare name is ambiguous
+/// in any file that imports both Vision and the core package. Those files spell the
+/// core type `CoreRect` instead of repeating the full module path at every use.
+typealias CoreRect = PicSigCore.NormalizedRect
+
 extension NormalizedRect {
     func cgRect(in size: CGSize) -> CGRect {
         CGRect(x: x * size.width, y: y * size.height, width: width * size.width, height: height * size.height)

@@ -104,17 +104,17 @@ struct VisualDetectionService {
         return result
     }
 
-    private func absoluteRect(_ rect: CGRect, tile: PixelRect, imageSize: PixelSize) -> NormalizedRect {
-        let inTile = NormalizedRect.fromBottomLeftOrigin(x: Double(rect.origin.x),
-                                                        y: Double(rect.origin.y),
-                                                        width: Double(rect.size.width),
-                                                        height: Double(rect.size.height))
+    private func absoluteRect(_ rect: CGRect, tile: PixelRect, imageSize: PixelSize) -> CoreRect {
+        let inTile = CoreRect.fromBottomLeftOrigin(x: Double(rect.origin.x),
+                                                   y: Double(rect.origin.y),
+                                                   width: Double(rect.size.width),
+                                                   height: Double(rect.size.height))
         let pixelX = Double(tile.x) + inTile.x * Double(tile.width)
         let pixelY = Double(tile.y) + inTile.y * Double(tile.height)
-        return NormalizedRect(x: pixelX / Double(imageSize.width),
-                              y: pixelY / Double(imageSize.height),
-                              width: inTile.width * Double(tile.width) / Double(imageSize.width),
-                              height: inTile.height * Double(tile.height) / Double(imageSize.height))
+        return CoreRect(x: pixelX / Double(imageSize.width),
+                        y: pixelY / Double(imageSize.height),
+                        width: inTile.width * Double(tile.width) / Double(imageSize.width),
+                        height: inTile.height * Double(tile.height) / Double(imageSize.height))
             .clampedToUnitSpace()
     }
 

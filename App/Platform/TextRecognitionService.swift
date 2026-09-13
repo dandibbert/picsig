@@ -124,27 +124,27 @@ struct TextRecognitionService {
     }
 
     /// Vision reports normalised, bottom-left origin rects relative to the tile.
-    private func absoluteRect(_ rect: CGRect, tile: PixelRect, imageSize: PixelSize) -> NormalizedRect {
-        let inTile = NormalizedRect.fromBottomLeftOrigin(x: Double(rect.origin.x),
-                                                        y: Double(rect.origin.y),
-                                                        width: Double(rect.size.width),
-                                                        height: Double(rect.size.height))
+    private func absoluteRect(_ rect: CGRect, tile: PixelRect, imageSize: PixelSize) -> CoreRect {
+        let inTile = CoreRect.fromBottomLeftOrigin(x: Double(rect.origin.x),
+                                                   y: Double(rect.origin.y),
+                                                   width: Double(rect.size.width),
+                                                   height: Double(rect.size.height))
         let pixelX = Double(tile.x) + inTile.x * Double(tile.width)
         let pixelY = Double(tile.y) + inTile.y * Double(tile.height)
         let pixelWidth = inTile.width * Double(tile.width)
         let pixelHeight = inTile.height * Double(tile.height)
-        return NormalizedRect(x: pixelX / Double(imageSize.width),
-                              y: pixelY / Double(imageSize.height),
-                              width: pixelWidth / Double(imageSize.width),
-                              height: pixelHeight / Double(imageSize.height))
+        return CoreRect(x: pixelX / Double(imageSize.width),
+                        y: pixelY / Double(imageSize.height),
+                        width: pixelWidth / Double(imageSize.width),
+                        height: pixelHeight / Double(imageSize.height))
             .clampedToUnitSpace()
     }
 
     private func characterBoxes(for candidate: VNRecognizedText,
                                 tile: PixelRect,
-                                imageSize: PixelSize) -> [NormalizedRect]? {
+                                imageSize: PixelSize) -> [CoreRect]? {
         let text = candidate.string
-        var boxes = [NormalizedRect]()
+        var boxes = [CoreRect]()
         boxes.reserveCapacity(text.count)
         var index = text.startIndex
         while index < text.endIndex {
