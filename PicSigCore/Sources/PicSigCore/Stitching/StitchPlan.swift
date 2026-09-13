@@ -52,7 +52,9 @@ public struct StitchJoin: Equatable, Sendable {
     public var overlap: Int
     public var confidence: Double
     public var isManual: Bool
-    /// Canvas coordinate of the seam, for the seam inspector.
+    /// Where the seam sits on the canvas, measured *along the stitch axis*: a Y
+    /// coordinate for a vertical stitch, an X coordinate for a horizontal one.
+    /// Always in the same pixel space as the plan that carries it.
     public var canvasPosition: Int
 
     public init(previousIndex: Int,
@@ -86,6 +88,15 @@ public enum StitchWarning: Equatable, Sendable {
     case duplicateSource(index: Int)
     /// Inputs of differing width; the result is cropped to the narrowest one.
     case mismatchedSourceSize(index: Int)
+
+    /// `contentGap` is the only case carrying pixel lengths, so it is the only one
+    /// that moves when a plan is rescaled. The UI reports `missingLength` in
+    /// pixels, which would understate the gap if it stayed in detection space.
+    func scaledAlongAxis(by factor: Double) -> StitchWarning {
+        guard case .contentGap(let canvasPosition, let missingLength) = self else { return self }
+        return .contentGap(canvasPosition: Int((Double(canvasPosition) * factor).rounded()),
+                           missingLength: Int((Double(missingLength) * factor).rounded()))
+    }
 }
 
 public struct StitchPlan: Equatable, Sendable {
@@ -134,6 +145,10 @@ public struct StitchPlan: Equatable, Sendable {
     public var joinsNeedingReview: [StitchJoin] { joins.filter(\.needsReview) }
 
     /// Mirrors a plan produced in transposed space back to image space.
+    ///
+    /// Joins pass through untouched on purpose: `overlap` and `canvasPosition` are
+    /// both measured along the stitch axis, and transposing swaps which axis that
+    /// is without changing the distance along it.
     public func transposedPlan() -> StitchPlan {
         StitchPlan(axis: axis.isVertical ? .horizontal : .vertical,
                    canvasSize: PixelSize(width: canvasSize.height, height: canvasSize.width),
@@ -148,8 +163,14 @@ public struct StitchPlan: Equatable, Sendable {
     /// Rescales a plan that was computed on downscaled inputs so it can be
     /// rendered at full resolution. A factor of 1 leaves the plan untouched, which
     /// is the normal case: alignment runs on full size grayscale buffers.
+    ///
+    /// Joins and the fixed band lengths are measured along the stitch axis, so
+    /// they follow that axis' factor rather than always following Y. Leaving the
+    /// joins in detection space would put every seam marker in the wrong place as
+    /// soon as the inputs are wider than the alignment limit.
     public func scaled(byX scaleX: Double, byY scaleY: Double) -> StitchPlan {
         guard scaleX != 1 || scaleY != 1 else { return self }
+        let alongAxis = axis.isVertical ? scaleY : scaleX
         func scale(_ rect: PixelRect) -> PixelRect {
             let left = Int((Double(rect.minX) * scaleX).rounded())
             let top = Int((Double(rect.minY) * scaleY).rounded())
@@ -157,6 +178,7 @@ public struct StitchPlan: Equatable, Sendable {
             let bottom = Int((Double(rect.maxY) * scaleY).rounded())
             return PixelRect(x: left, y: top, width: max(1, right - left), height: max(1, bottom - top))
         }
+        func scaleAlongAxis(_ value: Int) -> Int { Int((Double(value) * alongAxis).rounded()) }
         return StitchPlan(axis: axis,
                           canvasSize: PixelSize(width: Int((Double(canvasSize.width) * scaleX).rounded()),
                                                 height: Int((Double(canvasSize.height) * scaleY).rounded())),
@@ -166,11 +188,18 @@ public struct StitchPlan: Equatable, Sendable {
                                             destinationRect: scale($0.destinationRect),
                                             kind: $0.kind)
                           },
-                          joins: joins,
-                          warnings: warnings,
+                          joins: joins.map {
+                              StitchJoin(previousIndex: $0.previousIndex,
+                                         nextIndex: $0.nextIndex,
+                                         overlap: scaleAlongAxis($0.overlap),
+                                         confidence: $0.confidence,
+                                         isManual: $0.isManual,
+                                         canvasPosition: scaleAlongAxis($0.canvasPosition))
+                          },
+                          warnings: warnings.map { $0.scaledAlongAxis(by: alongAxis) },
                           skippedSourceIndices: skippedSourceIndices,
-                          fixedHeaderLength: Int((Double(fixedHeaderLength) * scaleY).rounded()),
-                          fixedFooterLength: Int((Double(fixedFooterLength) * scaleY).rounded()))
+                          fixedHeaderLength: scaleAlongAxis(fixedHeaderLength),
+                          fixedFooterLength: scaleAlongAxis(fixedFooterLength))
     }
 
     /// Sanity check used by tests and by the renderer before allocating a canvas.

@@ -321,3 +321,74 @@ final class ManualLayoutPlannerTests: XCTestCase {
         XCTAssertTrue(ManualLayoutPlanner.plan(sizes: [.zero], options: .verticalStack).isEmpty)
     }
 }
+
+/// Alignment runs on inputs capped at 1600px wide, so any wider screenshot (iPad,
+/// or landscape) produces a plan that has to be scaled up. Everything measured in
+/// pixels has to travel with it, including the seam positions the UI draws.
+final class StitchPlanScalingTests: XCTestCase {
+    private func verticalPlan() -> StitchPlan {
+        StitchPlan(axis: .vertical,
+                   canvasSize: PixelSize(width: 100, height: 400),
+                   segments: [StitchSegment(sourceIndex: 0,
+                                            sourceRect: PixelRect(x: 0, y: 0, width: 100, height: 200),
+                                            destinationRect: PixelRect(x: 0, y: 0, width: 100, height: 200))],
+                   joins: [StitchJoin(previousIndex: 0,
+                                      nextIndex: 1,
+                                      overlap: 30,
+                                      confidence: 0.8,
+                                      isManual: false,
+                                      canvasPosition: 200)],
+                   warnings: [.contentGap(canvasPosition: 200, missingLength: 40)],
+                   fixedHeaderLength: 20,
+                   fixedFooterLength: 10)
+    }
+
+    func testJoinsAreScaledWithTheCanvas() {
+        let scaled = verticalPlan().scaled(byX: 2, byY: 2)
+
+        XCTAssertEqual(scaled.canvasSize, PixelSize(width: 200, height: 800))
+        // The seam sat at half the canvas height and must still sit at half of it.
+        XCTAssertEqual(scaled.joins[0].canvasPosition, 400)
+        XCTAssertEqual(scaled.joins[0].overlap, 60)
+        XCTAssertEqual(scaled.fixedHeaderLength, 40)
+        XCTAssertEqual(scaled.fixedFooterLength, 20)
+    }
+
+    func testSeamStaysAtTheSameFractionOfTheCanvas() {
+        let plan = verticalPlan()
+        let scaled = plan.scaled(byX: 1.7475, byY: 1.7475)
+        let before = Double(plan.joins[0].canvasPosition) / Double(plan.canvasSize.height)
+        let after = Double(scaled.joins[0].canvasPosition) / Double(scaled.canvasSize.height)
+        XCTAssertEqual(after, before, accuracy: 0.002)
+    }
+
+    func testGapWarningLengthIsScaled() {
+        let scaled = verticalPlan().scaled(byX: 2, byY: 2)
+        guard case .contentGap(let position, let missing) = scaled.warnings[0] else {
+            return XCTFail("expected a content gap warning")
+        }
+        XCTAssertEqual(position, 400)
+        XCTAssertEqual(missing, 80)
+    }
+
+    /// A horizontal plan measures its joins along X, so it must follow the X factor.
+    func testHorizontalJoinsFollowTheHorizontalFactor() {
+        var plan = verticalPlan()
+        plan.axis = .horizontal
+        let scaled = plan.scaled(byX: 3, byY: 2)
+        XCTAssertEqual(scaled.joins[0].canvasPosition, 600)
+        XCTAssertEqual(scaled.joins[0].overlap, 90)
+    }
+
+    func testUnitScaleIsUntouched() {
+        let plan = verticalPlan()
+        XCTAssertEqual(plan.scaled(byX: 1, byY: 1), plan)
+    }
+
+    /// Transposing swaps which axis the joins are measured along, so the numbers
+    /// themselves stay put — a round trip has to be lossless.
+    func testTransposingTwiceRestoresThePlan() {
+        let plan = verticalPlan()
+        XCTAssertEqual(plan.transposedPlan().transposedPlan(), plan)
+    }
+}

@@ -851,6 +851,23 @@
         }
       }
     },
+    "export.saved.format": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %d image(s) to Photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入相册，共 %d 张。"
+          }
+        }
+      }
+    },
     "export.scale.4096": {
       "extractionState": "manual",
       "localizations": {
@@ -3822,6 +3839,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "接缝 %1$d · 重叠 %2$d px · 置信度 %3$d%%"
+          }
+        }
+      }
+    },
+    "stitch.seams.hiddenByGeometry": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seam markers follow the stitched image, so they are hidden while a crop or rotation is applied."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接缝标记是按拼接结果的坐标画的，裁剪或旋转后就对不上了，因此暂不显示。"
           }
         }
       }

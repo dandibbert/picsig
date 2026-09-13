@@ -119,6 +119,12 @@ struct StitchPanel: View {
                                                 set: { model.showsSeams = $0 }))
             .font(.subheadline)
 
+        // Markers live in the stitched image's coordinates, so a crop or rotation
+        // takes them away; saying so beats leaving the toggle looking broken.
+        if model.seamMarkersHiddenByGeometry {
+            NoticeRow(level: .info, text: NSLocalizedString("stitch.seams.hiddenByGeometry", comment: ""))
+        }
+
         if !model.plan.joins.isEmpty {
             ForEach(Array(model.plan.joins.enumerated()), id: \.offset) { index, join in
                 HStack(spacing: 8) {
@@ -128,21 +134,23 @@ struct StitchPanel: View {
                     Text(seamTitle(index: index, join: join))
                         .font(.caption.monospacedDigit())
                     Spacer()
-                    Button {
-                        model.adjustOverlap(forJoinAt: index, by: -4)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    Button {
-                        model.adjustOverlap(forJoinAt: index, by: 4)
-                    } label: {
-                        Image(systemName: "plus.circle")
+                    if model.canAdjustSeams {
+                        Button {
+                            model.adjustOverlap(forJoinAt: index, by: -4)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        Button {
+                            model.adjustOverlap(forJoinAt: index, by: 4)
+                        } label: {
+                            Image(systemName: "plus.circle")
+                        }
                     }
                 }
                 .buttonStyle(.borderless)
             }
 
-            if model.hasManualOverlaps {
+            if model.canAdjustSeams, model.hasManualOverlaps {
                 Button("stitch.resetOverlaps") { model.resetOverlaps() }
                     .font(.caption)
             }

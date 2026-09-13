@@ -80,6 +80,9 @@ final class WorkbenchViewModel {
     var progress: Double?
     var errorMessage: String?
     var exportedFiles: [URL] = []
+    /// Number of images the last "save to Photos" wrote, so the panel can confirm it
+    /// happened — otherwise saving looks like nothing at all.
+    var savedPageCount: Int?
     var isBusy: Bool { statusKey != nil }
 
     private var settings: AppSettings
@@ -240,6 +243,33 @@ final class WorkbenchViewModel {
 
     var hasManualOverlaps: Bool { !manualOverlaps.isEmpty }
 
+    /// Seam nudging works by re-running the pairwise overlap search with a fixed
+    /// overlap, which only the screenshot planner does. A recording is assembled
+    /// from absolute scroll positions, so there is no per-pair overlap to override
+    /// and the buttons would silently do nothing.
+    var canAdjustSeams: Bool { mode == .auto }
+
+    /// Where to draw the seam markers, as a fraction along the stitch axis.
+    ///
+    /// The plan describes the *stitched* image, while the canvas shows the cropped,
+    /// rotated and mirrored one, so the markers only line up while the geometry is
+    /// untouched. Rather than draw them in the wrong place, they are withheld.
+    var seamMarkers: [(fraction: Double, needsReview: Bool)] {
+        guard showsSeams, !plan.joins.isEmpty else { return [] }
+        guard document.state.crop == .full,
+              document.state.normalizedQuarterTurns == 0,
+              !document.state.isMirrored else { return [] }
+        let length = plan.axis.isVertical ? plan.canvasSize.height : plan.canvasSize.width
+        guard length > 0 else { return [] }
+        return plan.joins.map { (Double($0.canvasPosition) / Double(length), $0.needsReview) }
+    }
+
+    /// True when seams exist but the current crop or rotation means they cannot be
+    /// drawn, so the panel can say why the toggle appears to do nothing.
+    var seamMarkersHiddenByGeometry: Bool {
+        showsSeams && !plan.joins.isEmpty && seamMarkers.isEmpty
+    }
+
     // MARK: - Composition
 
     func scheduleRecompose() {
@@ -358,6 +388,13 @@ final class WorkbenchViewModel {
         }
         for index in matches.indices where matches[index].category == category {
             matches[index].isEnabled = enabled
+        }
+        // The scanner never looked for a category that was off, so switching one on
+        // cannot reveal anything until the image is read again. Without this the
+        // checkbox looks broken for exactly the categories the user cared enough
+        // about to enable.
+        if enabled, hasScannedOnce, !matches.contains(where: { $0.category == category }) {
+            needsRescan = true
         }
         rebuildAutomaticRedactions()
     }
@@ -559,39 +596,45 @@ final class WorkbenchViewModel {
     /// the drawn rectangle has to travel back through the rotation, the mirroring
     /// and any earlier crop first.
     func applyCrop(_ rect: NormalizedRect) {
-        document.setCrop(document.state.baseSpaceRect(rect))
-        invalidateScan()
-        scheduleRecompose()
+        let crop = document.state.baseSpaceRect(rect)
+        applyGeometryChange { $0.crop = crop.clampedToUnitSpace() }
     }
 
     func resetCrop() {
-        document.resetCrop()
-        invalidateScan()
-        scheduleRecompose()
+        applyGeometryChange { $0.crop = .full }
     }
 
     var isCropped: Bool { document.state.crop != .full }
 
-    /// Cropping or rotating moves every box that was reported for the previous
-    /// geometry, so the findings are dropped rather than drawn in the wrong place.
-    private func invalidateScan() {
-        guard hasScannedOnce, !matches.isEmpty else { return }
-        matches = []
-        layout = .empty
-        audit = nil
-        document.replaceAutomaticRedactions(with: [])
-        needsRescan = true
-    }
-
     func rotate() {
-        document.rotate()
-        invalidateScan()
-        scheduleRecompose()
+        applyGeometryChange { $0.quarterTurns = (($0.quarterTurns + 1) % 4 + 4) % 4 }
     }
 
     func mirror() {
-        document.mirror()
-        invalidateScan()
+        applyGeometryChange { $0.isMirrored.toggle() }
+    }
+
+    /// Cropping, rotating or mirroring redefines canvas space.
+    ///
+    /// Marks the user drew are moved with the content by `applyGeometryChange`, but
+    /// the scan results cannot be: their boxes came from OCR on the old canvas and
+    /// the character offsets no longer describe anything, so they are dropped and a
+    /// rescan is offered. Clearing them has to happen inside the same mutation, or
+    /// undoing once would restore the masks under the new geometry.
+    private func applyGeometryChange(_ mutate: (inout EditState) -> Void) {
+        let hadFindings = !matches.isEmpty
+        let changed = document.applyGeometryChange { state in
+            mutate(&state)
+            if hadFindings { state.redactions.removeAll { !$0.isManual } }
+        }
+        guard changed else { return }
+
+        if hadFindings {
+            matches = []
+            layout = .empty
+            needsRescan = true
+        }
+        audit = nil
         scheduleRecompose()
     }
 
@@ -622,6 +665,7 @@ final class WorkbenchViewModel {
     func export(saveToPhotos: Bool) async {
         guard let stitched else { return }
         statusKey = saveToPhotos ? "workbench.status.saving" : "workbench.status.exporting"
+        savedPageCount = nil
 
         var state = document.state
         if state.watermark == nil, let watermark = settings.watermark {
@@ -664,7 +708,14 @@ final class WorkbenchViewModel {
         switch outcome {
         case .success(let result):
             if let verification = result.audit { audit = verification }
-            exportedFiles = result.files
+            // Saving to the library is the whole action; handing the files to the
+            // share sheet as well would put a second screen in front of the user who
+            // just wanted the image in Photos.
+            if saveToPhotos {
+                savedPageCount = result.pageCount
+            } else {
+                exportedFiles = result.files
+            }
         case .failure(let error):
             errorMessage = error.localizedDescription
         }
@@ -700,15 +751,21 @@ private enum StitchPipeline {
             guard grays.count == images.count, let firstGray = grays.first, let firstImage = images.first else {
                 return (.empty, nil)
             }
+            let scale = Double(firstImage.width) / Double(max(1, firstGray.width))
             let detectionPlan: StitchPlan
             if mode == .video {
                 detectionPlan = VideoScrollPlanner.plan(frames: grays, options: preferences.videoOptions)
             } else {
+                // Seam nudges are stored in full resolution pixels, because that is
+                // what the seam inspector shows; the planner works on the downscaled
+                // copies, so they have to come back down first.
+                let detectionOverlaps = manualOverlaps.mapValues {
+                    max(0, Int((Double($0) / scale).rounded()))
+                }
                 detectionPlan = ScrollStitchPlanner.plan(images: grays,
-                                                         manualOverlaps: manualOverlaps,
+                                                         manualOverlaps: detectionOverlaps,
                                                          options: preferences.scrollOptions)
             }
-            let scale = Double(firstImage.width) / Double(max(1, firstGray.width))
             plan = detectionPlan.scaled(byX: scale, byY: scale)
         }
 

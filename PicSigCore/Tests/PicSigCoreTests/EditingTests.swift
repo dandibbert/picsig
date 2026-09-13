@@ -187,6 +187,150 @@ final class CanvasSpaceTests: XCTestCase {
     func testCanvasSizeOfEmptySourceIsEmpty() {
         XCTAssertEqual(EditState().canvasSize(for: .zero), .zero)
     }
+
+    /// `canvasSpacePoint` is the inverse used to move marks when the geometry
+    /// changes, so a round trip has to come back to where it started for every
+    /// combination — an asymmetry here would drift marks a little on each edit.
+    func testCanvasSpacePointIsTheInverseOfBaseSpacePoint() {
+        let probes = [(0.0, 0.0), (1.0, 1.0), (0.13, 0.77), (0.5, 0.5), (0.9, 0.05)]
+        for turns in 0..<4 {
+            for mirrored in [false, true] {
+                for crop in [NormalizedRect.full,
+                             NormalizedRect(x: 0.1, y: 0.2, width: 0.5, height: 0.3)] {
+                    var state = EditState()
+                    state.quarterTurns = turns
+                    state.isMirrored = mirrored
+                    state.crop = crop
+
+                    for (x, y) in probes {
+                        let base = state.baseSpacePoint(x: x, y: y)
+                        let back = state.canvasSpacePoint(x: base.x, y: base.y)
+                        XCTAssertEqual(back.x, x, accuracy: 0.0001,
+                                       "turns \(turns) mirrored \(mirrored) crop \(crop)")
+                        XCTAssertEqual(back.y, y, accuracy: 0.0001,
+                                       "turns \(turns) mirrored \(mirrored) crop \(crop)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Cropping or rotating changes what canvas space means, and marks are stored in
+/// canvas space — so without remapping, a mask silently stops covering the thing
+/// it was drawn over. These tests pin the mark down to the same content.
+final class MarkRemappingTests: XCTestCase {
+    private func mask(_ box: NormalizedRect) -> RedactionItem {
+        RedactionItem(box: box, style: .mosaic, strength: 0.8, category: .custom, isManual: true)
+    }
+
+    func testMaskStaysOnTheSameContentAfterRotation() {
+        var document = EditDocument()
+        // Covers the top-left corner of the unrotated image.
+        document.add(redaction: mask(NormalizedRect(x: 0, y: 0, width: 0.2, height: 0.1)))
+        document.rotate()
+
+        // One clockwise turn moves the source's top-left corner to the top-right.
+        let box = document.state.redactions[0].box
+        XCTAssertEqual(box.x, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(box.y, 0, accuracy: 0.0001)
+        XCTAssertEqual(box.width, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(box.height, 0.2, accuracy: 0.0001)
+    }
+
+    func testAnnotationStaysOnTheSameContentAfterMirroring() {
+        var document = EditDocument()
+        document.add(Annotation(tool: .line, points: [NormalizedPoint(x: 0.1, y: 0.4),
+                                                     NormalizedPoint(x: 0.3, y: 0.4)]))
+        document.mirror()
+
+        let points = document.state.annotations[0].points
+        XCTAssertEqual(points[0].x, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(points[1].x, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(points[0].y, 0.4, accuracy: 0.0001)
+    }
+
+    func testCroppingRescalesMarksIntoTheNewCanvas() {
+        var document = EditDocument()
+        // A mask over the middle of the image.
+        document.add(redaction: mask(NormalizedRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)))
+        // Crop to the centre half; the mask now fills the middle of a smaller canvas.
+        document.setCrop(NormalizedRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+
+        let box = document.state.redactions[0].box
+        XCTAssertEqual(box.x, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(box.y, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(box.width, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(box.height, 0.4, accuracy: 0.0001)
+    }
+
+    func testMaskCroppedCompletelyAwayIsDropped() {
+        var document = EditDocument()
+        document.add(redaction: mask(NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.1)))
+        document.setCrop(NormalizedRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5))
+        XCTAssertTrue(document.state.redactions.isEmpty)
+    }
+
+    func testRoundTripThroughRotationRestoresTheOriginalBox() {
+        let original = NormalizedRect(x: 0.15, y: 0.6, width: 0.2, height: 0.05)
+        var document = EditDocument()
+        document.add(redaction: mask(original))
+        for _ in 0..<4 { document.rotate() }
+
+        let box = document.state.redactions[0].box
+        XCTAssertEqual(box.x, original.x, accuracy: 0.0001)
+        XCTAssertEqual(box.y, original.y, accuracy: 0.0001)
+        XCTAssertEqual(box.width, original.width, accuracy: 0.0001)
+        XCTAssertEqual(box.height, original.height, accuracy: 0.0001)
+    }
+
+    /// The geometry change and the mark remap must be one undo step, or the first
+    /// Undo tap lands on a state the user never saw: marks moved back, image still
+    /// rotated.
+    func testGeometryChangeIsASingleUndoStep() {
+        var document = EditDocument()
+        document.add(redaction: mask(NormalizedRect(x: 0, y: 0, width: 0.2, height: 0.1)))
+        let before = document.state
+
+        document.rotate()
+        XCTAssertTrue(document.undo())
+        XCTAssertEqual(document.state, before)
+    }
+
+    /// Clearing the automatic masks alongside a crop is what the workbench does, and
+    /// it also has to stay inside the one step.
+    func testGeometryChangeCombinedWithClearingIsStillOneStep() {
+        var document = EditDocument()
+        document.add(redaction: mask(NormalizedRect(x: 0, y: 0, width: 0.2, height: 0.1)))
+        document.replaceAutomaticRedactions(with: [
+            RedactionItem(box: NormalizedRect(x: 0.3, y: 0.3, width: 0.2, height: 0.1),
+                          style: .mosaic, strength: 0.7, category: .phoneNumber)
+        ])
+        let before = document.state
+
+        document.applyGeometryChange { state in
+            state.quarterTurns = 1
+            state.redactions.removeAll { !$0.isManual }
+        }
+        XCTAssertEqual(document.state.redactions.count, 1)
+        XCTAssertTrue(document.undo())
+        XCTAssertEqual(document.state, before)
+    }
+
+    func testNonGeometryStateIsLeftAlone() {
+        var document = EditDocument()
+        document.add(Annotation(tool: .pen, points: [NormalizedPoint(x: 0.2, y: 0.2)]))
+        let annotations = document.state.annotations
+        // Setting the same crop again is a no-op and must not move anything.
+        XCTAssertFalse(document.setCropReturningChange(.full))
+        XCTAssertEqual(document.state.annotations, annotations)
+    }
+}
+
+private extension EditDocument {
+    mutating func setCropReturningChange(_ crop: NormalizedRect) -> Bool {
+        applyGeometryChange { $0.crop = crop.clampedToUnitSpace() }
+    }
 }
 
 final class AnnotationTests: XCTestCase {

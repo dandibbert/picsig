@@ -152,6 +152,12 @@ struct ExportPanel: View {
             }
             .controlSize(.regular)
             .disabled(model.isBusy)
+
+            if let count = model.savedPageCount {
+                NoticeRow(level: .info,
+                          text: String(format: NSLocalizedString("export.saved.format", comment: "page count"),
+                                       count))
+            }
         }
     }
 

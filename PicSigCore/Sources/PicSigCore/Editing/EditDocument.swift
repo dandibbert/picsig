@@ -132,20 +132,35 @@ public struct EditDocument: Equatable, Sendable {
         }
     }
 
+    /// Applies a change to the crop, rotation or mirroring, moving every mark the
+    /// user drew into the new canvas space as part of the same undo step.
+    ///
+    /// Both halves have to land together: if the geometry and the marks were two
+    /// entries, the first Undo tap would move the marks back while leaving the
+    /// image rotated, which is a state the user never created.
+    @discardableResult
+    public mutating func applyGeometryChange(_ mutate: (inout EditState) -> Void) -> Bool {
+        apply { state in
+            let previous = state
+            mutate(&state)
+            state = state.remappingMarks(fromCanvasSpaceOf: previous)
+        }
+    }
+
     public mutating func rotate(clockwise: Bool = true) {
-        apply { $0.quarterTurns = (($0.quarterTurns + (clockwise ? 1 : 3)) % 4 + 4) % 4 }
+        applyGeometryChange { $0.quarterTurns = (($0.quarterTurns + (clockwise ? 1 : 3)) % 4 + 4) % 4 }
     }
 
     public mutating func mirror() {
-        apply { $0.isMirrored.toggle() }
+        applyGeometryChange { $0.isMirrored.toggle() }
     }
 
     public mutating func setCrop(_ crop: NormalizedRect) {
-        apply { $0.crop = crop.clampedToUnitSpace() }
+        applyGeometryChange { $0.crop = crop.clampedToUnitSpace() }
     }
 
     public mutating func resetCrop() {
-        apply { $0.crop = .full }
+        applyGeometryChange { $0.crop = .full }
     }
 
     /// Undoing the last freehand stroke is the single most used action, so it gets

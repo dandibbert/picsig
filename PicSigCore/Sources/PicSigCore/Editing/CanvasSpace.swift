@@ -56,4 +56,78 @@ extension EditState {
                               height: abs(opposite.y - corner.y))
             .clampedToUnitSpace()
     }
+
+    /// Converts a point from base space into canvas space — the exact inverse of
+    /// `baseSpacePoint(x:y:)`, so the steps run in the opposite order.
+    ///
+    /// The result is deliberately *not* clamped: a mark that now falls outside the
+    /// crop keeps its real position, so the part still inside stays where the user
+    /// put it instead of being dragged to the edge.
+    public func canvasSpacePoint(x: Double, y: Double) -> (x: Double, y: Double) {
+        var px = crop.width > 0 ? (x - crop.x) / crop.width : 0
+        var py = crop.height > 0 ? (y - crop.y) / crop.height : 0
+
+        if isMirrored { px = 1 - px }
+
+        switch normalizedQuarterTurns {
+        case 1: (px, py) = (1 - py, px)
+        case 2: (px, py) = (1 - px, 1 - py)
+        case 3: (px, py) = (py, 1 - px)
+        default: break
+        }
+
+        return (px, py)
+    }
+
+    /// Converts a rectangle from base space into canvas space.
+    public func canvasSpaceRect(_ rect: NormalizedRect) -> NormalizedRect {
+        let corner = canvasSpacePoint(x: rect.minX, y: rect.minY)
+        let opposite = canvasSpacePoint(x: rect.maxX, y: rect.maxY)
+        return NormalizedRect(x: min(corner.x, opposite.x),
+                              y: min(corner.y, opposite.y),
+                              width: abs(opposite.x - corner.x),
+                              height: abs(opposite.y - corner.y))
+    }
+}
+
+extension EditState {
+    /// Moves everything the user drew from `previous`'s canvas space into this
+    /// state's canvas space.
+    ///
+    /// Annotations and hand-drawn masks are stored in canvas space, so changing the
+    /// crop, rotation or mirroring silently re-points them at different pixels —
+    /// which for a mask means it stops covering what was hidden. Routing each mark
+    /// through base space keeps it on the same content.
+    ///
+    /// Marks that end up completely outside the new crop are dropped rather than
+    /// clamped, because a mask squashed against the edge looks deliberate and hides
+    /// the wrong thing. Annotation points are left unclamped so a stroke that is
+    /// only partly outside still draws its visible part correctly.
+    public func remappingMarks(fromCanvasSpaceOf previous: EditState) -> EditState {
+        guard previous.crop != crop
+                || previous.normalizedQuarterTurns != normalizedQuarterTurns
+                || previous.isMirrored != isMirrored else { return self }
+
+        func remap(_ point: NormalizedPoint) -> NormalizedPoint {
+            let base = previous.baseSpacePoint(x: point.x, y: point.y)
+            let canvas = canvasSpacePoint(x: base.x, y: base.y)
+            return NormalizedPoint(x: canvas.x, y: canvas.y)
+        }
+
+        var copy = self
+        copy.annotations = annotations.map { annotation in
+            var moved = annotation
+            moved.points = annotation.points.map(remap)
+            return moved
+        }
+        copy.redactions = redactions.compactMap { item in
+            let base = previous.baseSpaceRect(item.box)
+            let box = canvasSpaceRect(base).clampedToUnitSpace()
+            guard !box.isEmpty else { return nil }
+            var moved = item
+            moved.box = box
+            return moved
+        }
+        return copy
+    }
 }

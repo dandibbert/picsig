@@ -58,6 +58,7 @@ struct CanvasView: View {
             .frame(width: contentSize.width, height: contentSize.height)
             .contentShape(Rectangle())
             .gesture(canvasGesture(size: contentSize))
+            .simultaneousGesture(zoomGesture)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
         } else {
@@ -104,6 +105,23 @@ struct CanvasView: View {
         committedZoom = zoom
     }
 
+    /// Pinching multiplies the zoom that was in effect when the gesture started, so
+    /// two successive pinches compound the way they do in Photos.
+    ///
+    /// Zooming is disabled while a tool is armed: a drawing drag and a pinch both
+    /// begin as touches on the canvas, and letting them compete makes precise marks
+    /// impossible.
+    private var zoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                guard !model.activeTool.isDrawing else { return }
+                zoom = min(6, max(1, committedZoom * value.magnification))
+            }
+            .onEnded { _ in
+                committedZoom = zoom
+            }
+    }
+
     // MARK: - Overlays
 
     private func matchOverlay(size: CGSize) -> some View {
@@ -136,18 +154,21 @@ struct CanvasView: View {
     }
 
     /// Shows where two screenshots were joined, so a wrong seam is easy to spot.
+    ///
+    /// A horizontal stitch measures its seams along X, so the marker is a vertical
+    /// line in that case.
     @ViewBuilder
     private func seamOverlay(size: CGSize) -> some View {
-        if model.showsSeams, model.plan.canvasSize.height > 0 {
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(model.plan.joins.enumerated()), id: \.offset) { _, join in
-                    let y = CGFloat(Double(join.canvasPosition) / Double(model.plan.canvasSize.height)) * size.height
-                    Rectangle()
-                        .fill(join.needsReview ? Color.orange : Color.green.opacity(0.7))
-                        .frame(width: size.width, height: 1.5)
-                        .offset(y: y)
-                        .allowsHitTesting(false)
-                }
+        let isVertical = model.plan.axis.isVertical
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(model.seamMarkers.enumerated()), id: \.offset) { _, marker in
+                Rectangle()
+                    .fill(marker.needsReview ? Color.orange : Color.green.opacity(0.7))
+                    .frame(width: isVertical ? size.width : 1.5,
+                           height: isVertical ? 1.5 : size.height)
+                    .offset(x: isVertical ? 0 : CGFloat(marker.fraction) * size.width,
+                            y: isVertical ? CGFloat(marker.fraction) * size.height : 0)
+                    .allowsHitTesting(false)
             }
         }
     }
