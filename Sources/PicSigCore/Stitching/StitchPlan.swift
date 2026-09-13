@@ -145,6 +145,34 @@ public struct StitchPlan: Equatable, Sendable {
                    fixedFooterLength: fixedFooterLength)
     }
 
+    /// Rescales a plan that was computed on downscaled inputs so it can be
+    /// rendered at full resolution. A factor of 1 leaves the plan untouched, which
+    /// is the normal case: alignment runs on full size grayscale buffers.
+    public func scaled(byX scaleX: Double, byY scaleY: Double) -> StitchPlan {
+        guard scaleX != 1 || scaleY != 1 else { return self }
+        func scale(_ rect: PixelRect) -> PixelRect {
+            let left = Int((Double(rect.minX) * scaleX).rounded())
+            let top = Int((Double(rect.minY) * scaleY).rounded())
+            let right = Int((Double(rect.maxX) * scaleX).rounded())
+            let bottom = Int((Double(rect.maxY) * scaleY).rounded())
+            return PixelRect(x: left, y: top, width: max(1, right - left), height: max(1, bottom - top))
+        }
+        return StitchPlan(axis: axis,
+                          canvasSize: PixelSize(width: Int((Double(canvasSize.width) * scaleX).rounded()),
+                                                height: Int((Double(canvasSize.height) * scaleY).rounded())),
+                          segments: segments.map {
+                              StitchSegment(sourceIndex: $0.sourceIndex,
+                                            sourceRect: scale($0.sourceRect),
+                                            destinationRect: scale($0.destinationRect),
+                                            kind: $0.kind)
+                          },
+                          joins: joins,
+                          warnings: warnings,
+                          skippedSourceIndices: skippedSourceIndices,
+                          fixedHeaderLength: Int((Double(fixedHeaderLength) * scaleY).rounded()),
+                          fixedFooterLength: Int((Double(fixedFooterLength) * scaleY).rounded()))
+    }
+
     /// Sanity check used by tests and by the renderer before allocating a canvas.
     public func validate(sourceSizes: [PixelSize]) -> [String] {
         var problems = [String]()
