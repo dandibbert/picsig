@@ -1,7 +1,7 @@
 import Foundation
 
 /// One area of the image to be modified.
-public struct RedactionItem: Identifiable, Equatable, Sendable {
+public struct RedactionItem: Identifiable, Equatable, Codable, Sendable {
     public let id: UUID
     public var box: NormalizedRect
     public var style: RedactionStyle
@@ -40,7 +40,7 @@ public struct RedactionItem: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct RedactionPlan: Equatable, Sendable {
+public struct RedactionPlan: Equatable, Codable, Sendable {
     public var items: [RedactionItem]
     public var imageSize: PixelSize
 
