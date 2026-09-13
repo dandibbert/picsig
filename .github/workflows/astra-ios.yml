@@ -15,6 +15,15 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Snapshot exact source
+        run: |
+          mkdir -p build
+          git archive --format=zip --output=build/PicSig-Astra-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PicSig-Astra-source-${{ github.run_attempt }}
+          path: build/PicSig-Astra-source.zip
+          retention-days: 14
       - name: Toolchain & reproducible project
         run: |
           set -euo pipefail
@@ -28,7 +37,8 @@ jobs:
       - name: Select simulator
         run: |
           set -euo pipefail
-          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in sorted(d.items(),reverse=True) if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          export SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys,os; d=json.load(sys.stdin)["devices"]; sdk="iOS-"+os.environ["SIM_SDK"].replace(".","-"); choices=[x["udid"] for k,v in d.items() if sdk in k for x in v if x["name"].startswith("iPhone")]; print(choices[0] if choices else next(x["udid"] for k,v in sorted(d.items(),reverse=True) if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
           echo "SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
@@ -58,6 +68,10 @@ jobs:
           if [ -d build/UITests.xcresult ]; then
             xcrun xcresulttool export attachments --path build/UITests.xcresult --output-path build/screenshots || true
           fi
+          if [ -d build/ImageTests.xcresult ]; then
+            mkdir -p build/image-attachments
+            xcrun xcresulttool export attachments --path build/ImageTests.xcresult --output-path build/image-attachments || true
+          fi
           if [ -n "${SIMULATOR_ID:-}" ]; then
             xcrun simctl io "$SIMULATOR_ID" screenshot build/screenshots/last-state.png || true
           fi
@@ -74,10 +88,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PicSig-Astra-test-results
+          name: PicSig-Astra-test-results-${{ github.run_attempt }}
           retention-days: 14
           if-no-files-found: warn
           path: |
             build/*.log
             build/*.xcresult
             build/screenshots/
+            build/image-attachments/
