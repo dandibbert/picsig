@@ -60,6 +60,40 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee build-simulator.log
 
+      # These run on the simulator against the real Vision / CoreGraphics
+      # frameworks, which is the part the Linux suite cannot reach: it proves the
+      # rules are right, not that OCR on actual pixels feeds them usable input.
+      - name: Run iOS tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project PicSig.xcodeproj \
+            -scheme PicSig \
+            -configuration Debug \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/dd \
+            -resultBundlePath build/TestResults.xcresult \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee build-tests.log
+
+      - name: Test summary
+        if: always()
+        run: |
+          if [ -d build/TestResults.xcresult ]; then
+            xcrun xcresulttool get test-results summary \
+              --path build/TestResults.xcresult 2>/dev/null || true
+          fi
+          grep -E "Test Case .* (passed|failed)|Executed [0-9]+ test" build-tests.log | tail -40 || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+
       # Compiling proves it links; launching proves the SwiftUI graph, the
       # @Observable models and the asset/localisation lookups actually stand up at
       # runtime. A crash on the first screen would otherwise reach a real device.

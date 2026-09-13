@@ -8,16 +8,33 @@
 
 /* Begin PBXBuildFile section */
 		AB1000000000000000000012 /* PicSigCore in Frameworks */ = {isa = PBXBuildFile; productRef = AB1000000000000000000011 /* PicSigCore */; };
+		AB200000000000000000000D /* PicSigCore in Frameworks */ = {isa = PBXBuildFile; productRef = AB200000000000000000000C /* PicSigCore */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AB200000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AB1000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AB1000000000000000000004;
+			remoteInfo = PicSig;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		AB1000000000000000000005 /* PicSig.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PicSig.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB2000000000000000000001 /* PicSigTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PicSigTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AB1000000000000000000006 /* App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = App;
+			sourceTree = "<group>";
+		};
+		AB2000000000000000000002 /* AppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AppTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -31,6 +48,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB2000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB200000000000000000000D /* PicSigCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -38,6 +63,7 @@
 			isa = PBXGroup;
 			children = (
 				AB1000000000000000000006 /* App */,
+				AB2000000000000000000002 /* AppTests */,
 				AB1000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -46,6 +72,7 @@
 			isa = PBXGroup;
 			children = (
 				AB1000000000000000000005 /* PicSig.app */,
+				AB2000000000000000000001 /* PicSigTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,6 +103,30 @@
 			productReference = AB1000000000000000000005 /* PicSig.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AB2000000000000000000003 /* PicSigTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB2000000000000000000007 /* Build configuration list for PBXNativeTarget "PicSigTests" */;
+			buildPhases = (
+				AB2000000000000000000004 /* Sources */,
+				AB2000000000000000000005 /* Frameworks */,
+				AB2000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AB200000000000000000000A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AB2000000000000000000002 /* AppTests */,
+			);
+			name = PicSigTests;
+			packageProductDependencies = (
+				AB200000000000000000000C /* PicSigCore */,
+			);
+			productName = PicSigTests;
+			productReference = AB2000000000000000000001 /* PicSigTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -88,6 +139,10 @@
 				TargetAttributes = {
 					AB1000000000000000000004 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					AB2000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = AB1000000000000000000004;
 					};
 				};
 			};
@@ -110,12 +165,20 @@
 			projectRoot = "";
 			targets = (
 				AB1000000000000000000004 /* PicSig */,
+				AB2000000000000000000003 /* PicSigTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		AB1000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB2000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -132,7 +195,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB2000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB200000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AB1000000000000000000004 /* PicSig */;
+			targetProxy = AB200000000000000000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AB100000000000000000000C /* Debug */ = {
@@ -253,6 +331,40 @@
 			};
 			name = Release;
 		};
+		AB2000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.picsig.longshot.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PicSig.app/PicSig";
+			};
+			name = Debug;
+		};
+		AB2000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.picsig.longshot.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PicSig.app/PicSig";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -274,6 +386,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		AB2000000000000000000007 /* Build configuration list for PBXNativeTarget "PicSigTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB2000000000000000000008 /* Debug */,
+				AB2000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -285,6 +406,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		AB1000000000000000000011 /* PicSigCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PicSigCore;
+		};
+		AB200000000000000000000C /* PicSigCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PicSigCore;
 		};
