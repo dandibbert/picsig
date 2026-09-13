@@ -10,7 +10,8 @@ final class MosaicDiagnosticTests: XCTestCase {
         let cgImage = try XCTUnwrap(image.cgImage)
         let rect = CGRect(x: 32, y: 36, width: 320, height: 40)
         var report = [String]()
-        report.append("source: \(cgImage.width)x\(cgImage.height) bpc=\(cgImage.bitsPerComponent) bpp=\(cgImage.bitsPerPixel) alpha=\(cgImage.alphaInfo.rawValue) bitmapInfo=\(cgImage.bitmapInfo.rawValue) space=\(cgImage.colorSpace?.name.map(String.init) ?? "nil")")
+        let spaceName: String = cgImage.colorSpace?.name.map { $0 as String } ?? "nil"
+        report.append("source: \(cgImage.width)x\(cgImage.height) bpc=\(cgImage.bitsPerComponent) bpp=\(cgImage.bitsPerPixel) alpha=\(cgImage.alphaInfo.rawValue) bitmapInfo=\(cgImage.bitmapInfo.rawValue) space=\(spaceName)")
 
         func mean(_ bytes: [UInt8]?) -> String {
             guard let bytes else { return "nil" }
