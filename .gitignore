@@ -11,3 +11,6 @@ xcuserdata/
 *.mobileprovision
 *.cer
 __pycache__/
+
+# Generated deterministically by scripts/generate_project.py
+App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
