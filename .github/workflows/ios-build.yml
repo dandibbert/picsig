@@ -1,0 +1,96 @@
+name: iOS build
+
+# The core package is covered on Linux by core-tests.yml. This workflow is the
+# only place the iOS layer (UIKit / SwiftUI / Vision / AVFoundation) is actually
+# compiled, so it is what proves the app builds at all.
+on:
+  push:
+    branches:
+      - main
+      - 'cursor/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+          xcodebuild -showsdks | grep -i ios || true
+
+      - name: Resolve package dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project PicSig.xcodeproj \
+            -scheme PicSig
+
+      - name: Build for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project PicSig.xcodeproj \
+            -scheme PicSig \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee build-simulator.log
+
+      - name: Archive for device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project PicSig.xcodeproj \
+            -scheme PicSig \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/PicSig.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            | tee build-archive.log
+
+      # No signing certificate is available in CI, so the archive is packaged by
+      # hand. The result installs on a jailbroken device or a simulator, and is
+      # enough to confirm the app links and bundles correctly.
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="build/PicSig.xcarchive/Products/Applications/PicSig.app"
+          test -d "$APP_PATH" || { echo "no .app produced"; ls -R build/PicSig.xcarchive/Products || true; exit 1; }
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          (cd build && zip -qry PicSig-unsigned.ipa Payload)
+          ls -lh build/PicSig-unsigned.ipa
+          echo "--- bundle contents ---"
+          ls -l "$APP_PATH"
+          echo "--- Info.plist keys ---"
+          plutil -p "$APP_PATH/Info.plist" | head -40
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicSig-unsigned-ipa
+          path: build/PicSig-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build-*.log
+          if-no-files-found: ignore
