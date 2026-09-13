@@ -73,8 +73,7 @@ enum RedactionRenderer {
                                    options: Options) {
         let block = blockSize(for: rect, strength: item.strength, options: options)
         guard let cgImage = source.cgImage,
-              let cropped = cgImage.cropping(to: rect),
-              let pixels = rgbaPixels(of: cropped) else {
+              let pixels = rgbaPixels(of: cgImage, in: rect) else {
             drawSolid(rect: rect, context: context)
             return
         }
@@ -84,8 +83,8 @@ enum RedactionRenderer {
         // scaled draw came out black on the simulator, so the result contains
         // exactly `columns * rows` colours and nothing depends on how Core Graphics
         // chooses to resample.
-        let width = cropped.width
-        let height = cropped.height
+        let width = Int(rect.width)
+        let height = Int(rect.height)
         let columns = max(1, width / block)
         let rows = max(1, height / block)
 
@@ -122,10 +121,14 @@ enum RedactionRenderer {
         }
     }
 
-    /// The image's pixels as tightly packed 8 bit RGBX rows, top row first.
-    private static func rgbaPixels(of image: CGImage) -> [UInt8]? {
-        let width = image.width
-        let height = image.height
+    /// The pixels inside `rect` as tightly packed 8 bit RGBA rows, top row first.
+    ///
+    /// The whole image is drawn, shifted so `rect` lands on the context, rather
+    /// than a `cropping(to:)` sub-image: on the simulator a cropped copy of an
+    /// extended range bitmap rendered black into an 8 bit context.
+    private static func rgbaPixels(of image: CGImage, in rect: CGRect) -> [UInt8]? {
+        let width = Int(rect.width)
+        let height = Int(rect.height)
         guard width > 0, height > 0 else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
@@ -135,10 +138,14 @@ enum RedactionRenderer {
                                           bitsPerComponent: 8,
                                           bytesPerRow: width * 4,
                                           space: CGColorSpaceCreateDeviceRGB(),
-                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
                 return false
             }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            // Core Graphics contexts have a bottom-left origin.
+            context.draw(image, in: CGRect(x: -rect.minX,
+                                           y: -(CGFloat(image.height) - rect.maxY),
+                                           width: CGFloat(image.width),
+                                           height: CGFloat(image.height)))
             return true
         }
         return drawn ? bytes : nil
