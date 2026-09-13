@@ -6,6 +6,7 @@ struct EditorView: View {
     @State private var tool: CanvasTool = .navigate
     @State private var reveal = false
     @State private var review = false
+    @State private var textRedaction = false
     @State private var settings = false
     @State private var rescan = false
     @State private var textPoint: Point2D?
@@ -47,11 +48,22 @@ struct EditorView: View {
                 else if [.pen, .arrow, .rectangle, .text].contains(tool) { markControls }
                 else if tool == .crop { cropControls }
                 else { Text(tool == .navigate ? "点击遮挡区域可复核 · 双指缩放" : "单指操作 · 双指平移与缩放").font(.caption2).foregroundStyle(.secondary) }
-                HStack(spacing: 10) {
-                    Button { if session.project.edit.masks.isEmpty { session.scan() } else { rescan = true } } label: { Label("智能打码", systemImage: "sparkles").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered).accessibilityIdentifier("scan-privacy")
-                    Button { review = true } label: { Label("复核 \(session.project.edit.masks.count) 处", systemImage: "checklist").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered).accessibilityIdentifier("review-masks")
+                HStack(spacing: 8) {
+                    Button { textRedaction = true } label: {
+                        Label("文字", systemImage: "text.viewfinder").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("text-redaction")
+                    Button { if session.project.edit.masks.isEmpty { session.scan() } else { rescan = true } } label: {
+                        Label("智能", systemImage: "sparkles").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("scan-privacy")
+                    Button { review = true } label: {
+                        Label("复核 \(session.project.edit.masks.count)", systemImage: "checklist").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("review-masks")
                 }.controlSize(.large)
             }.padding(.horizontal, 16).padding(.vertical, 12).background(.regularMaterial)
         }.background(Color.picCanvas).disabled(session.busy)
@@ -59,6 +71,9 @@ struct EditorView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("导出") { reveal = false; session.exportResult = nil; session.showExport = true }.fontWeight(.semibold).disabled(session.busy).accessibilityIdentifier("open-export")
             }
+        }
+        .sheet(isPresented: $textRedaction) {
+            TextRedactionView(session: session)
         }
         .sheet(isPresented: $review) {
             MaskReviewView(session: session) { id in session.selectedMask = id; tool = .adjust; review = false }
@@ -91,7 +106,7 @@ struct EditorView: View {
             Image(systemName: session.project.edit.scanFinished ? "shield.lefthalf.filled" : "shield").foregroundStyle(session.project.edit.scanFinished ? Color.picMint : Color.orange)
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.project.edit.scanFinished ? "\(session.activeMasks) 处已遮挡 · 分享前请复核" : "隐私检查尚未完成").font(.caption.weight(.semibold))
-                Text("自动识别可能遗漏，导出前仍需人工检查。").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("自动识别可能遗漏，也可用「文字」直接点选 OCR 结果打码。").font(.system(size: 10)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             if session.project.edit.quarterTurns != 0 { Text("导出 ↻\(session.project.edit.quarterTurns * 90)°").font(.caption2).foregroundStyle(.secondary) }
@@ -182,10 +197,10 @@ struct MaskReviewView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("识别结果不是安全保证。请检查截图里的姓名、地址、头像和业务信息；遗漏的区域可用「遮挡」手动画框。").font(.footnote).foregroundStyle(.secondary)
+                    Text("识别结果不是安全保证。请检查截图里的姓名、地址、头像和业务信息；遗漏的区域可用「文字」直接点选，或用「遮挡」手动画框。").font(.footnote).foregroundStyle(.secondary)
                     Picker("筛选", selection: $filter) { Text("全部").tag(0); Text("待复核").tag(1); Text("已保留").tag(2) }.pickerStyle(.segmented)
                 }
-                if visible.isEmpty { ContentUnavailableView("没有对应标记", systemImage: "checklist", description: Text("这不表示图中没有敏感内容。可以返回画布手动检查。")) }
+                if visible.isEmpty { ContentUnavailableView("没有对应标记", systemImage: "checklist", description: Text("这不表示图中没有敏感内容。可以返回画布继续人工检查。")) }
                 ForEach(visible) { mask in
                     HStack(spacing: 14) {
                         Button { locate(mask.id) } label: {
