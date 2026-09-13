@@ -11,9 +11,16 @@ enum EditorTool: Equatable {
     /// Tap a recognised line of text to mask it. A tap, not a drag, so the
     /// canvas keeps scrolling while it is armed.
     case textPick
+    /// Drag anywhere on the canvas to move this mark; each drag is one undo step.
+    case move(UUID)
 
     var annotationTool: AnnotationTool? {
         if case .annotation(let tool) = self { return tool }
+        return nil
+    }
+
+    var movingAnnotationID: UUID? {
+        if case .move(let id) = self { return id }
         return nil
     }
 
@@ -65,7 +72,14 @@ final class WorkbenchViewModel {
     // MARK: Editing
 
     var document = EditDocument()
-    var activeTool: EditorTool = .none
+    var activeTool: EditorTool = .none {
+        didSet {
+            if let tool = activeTool.annotationTool { lastAnnotationTool = tool }
+        }
+    }
+    /// The annotation tool whose options the strip shows — the armed one, or the
+    /// one used last so the row never goes blank.
+    private(set) var lastAnnotationTool: AnnotationTool = .pen
     var strokeColor: RGBAColor = .red
     var strokeWidth: Double = 0.006
     var fontSize: Double = 0.035
@@ -106,6 +120,8 @@ final class WorkbenchViewModel {
     private var composedAnnotationIDs: Set<UUID> = []
     private var adjustmentBaseline: ImageAdjustments?
     private var editingAnnotationBaseline: Annotation?
+    private var watermarkBaseline: Watermark?
+    private var hasWatermarkBaseline = false
     /// Bumped on every rebuild so results of a superseded stitch or scan can be
     /// dropped instead of being applied to a canvas they no longer describe.
     private var canvasGeneration = 0
@@ -718,6 +734,15 @@ final class WorkbenchViewModel {
         document.state.annotations.last { $0.hitTest(point, tolerance: 0.012) }
     }
 
+    /// Moves a mark by a normalised offset from where it was when the drag began.
+    func previewMove(_ id: UUID, from original: Annotation, dx: Double, dy: Double) {
+        previewAnnotation(id) { annotation in
+            annotation.points = original.points.map { point in
+                NormalizedPoint(x: min(1, max(0, point.x + dx)), y: min(1, max(0, point.y + dy)))
+            }
+        }
+    }
+
     func undoLastStroke() {
         document.undoLastStroke()
         recomposeNow()
@@ -819,6 +844,28 @@ final class WorkbenchViewModel {
     func setWatermark(_ watermark: Watermark?) {
         document.apply { $0.watermark = watermark }
         scheduleRecompose()
+    }
+
+    /// Watermark edits from the sheet preview live and collapse into one undo
+    /// step when the sheet closes, like the tone sliders.
+    func previewWatermark(_ watermark: Watermark?) {
+        if !hasWatermarkBaseline {
+            hasWatermarkBaseline = true
+            watermarkBaseline = document.state.watermark
+        }
+        document.previewChange { $0.watermark = watermark }
+        scheduleRecompose()
+    }
+
+    func commitWatermark() {
+        guard hasWatermarkBaseline else { return }
+        hasWatermarkBaseline = false
+        let baseline = watermarkBaseline
+        watermarkBaseline = nil
+        let current = document.state.watermark
+        guard current != baseline else { return }
+        document.previewChange { $0.watermark = baseline }
+        document.apply { $0.watermark = current }
     }
 
     func setCanvasStyle(_ style: CanvasStyle) {

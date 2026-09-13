@@ -26,6 +26,8 @@ struct CanvasView: View {
     @State private var strokePoints: [NormalizedPoint] = []
     @State private var dragStart: NormalizedPoint?
     @State private var dragCurrent: NormalizedPoint?
+    /// The mark as it was when a move drag began.
+    @State private var moveOrigin: (point: NormalizedPoint, annotation: Annotation)?
 
     private let maximumZoom: CGFloat = 8
 
@@ -50,6 +52,23 @@ struct CanvasView: View {
                         .padding(.vertical, 6)
                         .background(.thinMaterial, in: Capsule())
                         .padding(.top, 10)
+                }
+                if model.activeTool.movingAnnotationID != nil {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                            .font(.caption)
+                        Text("annotate.move.hint")
+                            .font(.caption)
+                        Button("common.done") { model.activeTool = .none }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+                    }
+                    .padding(.leading, 12)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 5)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.top, 10)
                 }
             }
         }
@@ -387,6 +406,16 @@ struct CanvasView: View {
                 case .redactionBox, .cropBox:
                     if dragStart == nil { dragStart = point }
                     dragCurrent = point
+                case .move(let id):
+                    if moveOrigin == nil {
+                        guard let annotation = model.annotation(id) else { break }
+                        moveOrigin = (point, annotation)
+                        model.beginEditingAnnotation(id)
+                    }
+                    guard let origin = moveOrigin else { break }
+                    model.previewMove(id, from: origin.annotation,
+                                      dx: point.x - origin.point.x,
+                                      dy: point.y - origin.point.y)
                 }
             }
             .onEnded { value in
@@ -395,6 +424,7 @@ struct CanvasView: View {
                     strokePoints = []
                     dragStart = nil
                     dragCurrent = nil
+                    moveOrigin = nil
                 }
 
                 switch model.activeTool {
@@ -430,6 +460,8 @@ struct CanvasView: View {
                     guard let start = dragStart else { break }
                     model.applyCrop(rect(from: start, to: point))
                     model.activeTool = .none
+                case .move(let id):
+                    model.endEditingAnnotation(id, commit: true)
                 }
             }
     }

@@ -19,17 +19,17 @@ final class AnnotationFontsTests: XCTestCase {
         XCTAssertEqual(AnnotationFonts.displayName(for: "Courier-Bold"), "Courier Bold")
     }
 
-    func testInstalledFamiliesListTheDeviceFonts() {
-        let families = AnnotationFonts.installedFamilies()
-        XCTAssertFalse(families.isEmpty)
-        XCTAssertTrue(families.contains { $0.name == "Helvetica" })
-        XCTAssertFalse(families.contains { $0.name.hasPrefix(".") }, "hidden UI fonts are not offered")
-        for family in families {
-            XCTAssertFalse(family.faces.isEmpty)
-            XCTAssertNotNil(UIFont(name: family.preferredFace, size: 12), family.preferredFace)
+    func testAvailabilityAndRequestOfKnownFonts() {
+        XCTAssertTrue(AnnotationFonts.isAvailable(nil))
+        XCTAssertTrue(AnnotationFonts.isAvailable("Helvetica"))
+        XCTAssertFalse(AnnotationFonts.isAvailable("NoSuchFont-Regular"))
+
+        let done = expectation(description: "request completes")
+        AnnotationFonts.request(["Helvetica"]) { missing in
+            XCTAssertTrue(missing.isEmpty, "an already available font needs no request")
+            done.fulfill()
         }
-        // Simulator and device ship no profile fonts, so nothing may be flagged.
-        XCTAssertTrue(families.filter(\.isUserInstalled).isEmpty)
+        wait(for: [done], timeout: 5)
     }
 
     func testChosenFontChangesTheRenderedMark() {

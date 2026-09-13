@@ -193,6 +193,13 @@ struct AnnotationStyleEditor: View {
                     }
 
                     Section {
+                        Button {
+                            model.endEditingAnnotation(annotationID, commit: true)
+                            model.activeTool = .move(annotationID)
+                            dismiss()
+                        } label: {
+                            Label("annotate.move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                        }
                         Button(role: .destructive) {
                             model.endEditingAnnotation(annotationID, commit: false)
                             model.removeAnnotation(annotationID)
@@ -256,6 +263,7 @@ struct TextAnnotationEditor: View {
     @State private var fontSize: Double = 0.035
     @State private var color: RGBAColor = .red
     @State private var didLoad = false
+    @State private var isFontPickerPresented = false
 
     var body: some View {
         NavigationStack {
@@ -277,16 +285,26 @@ struct TextAnnotationEditor: View {
                 }
 
                 Section {
-                    NavigationLink {
-                        FontPickerView(selection: $fontName)
+                    Button {
+                        isFontPickerPresented = true
                     } label: {
                         HStack {
                             Text("annotate.font")
+                                .foregroundStyle(.primary)
                             Spacer()
                             Text(AnnotationFonts.displayName(for: fontName))
+                                .font(Font(AnnotationFonts.font(named: fontName, size: 17) as CTFont))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
                         }
+                    }
+                    if !AnnotationFonts.isAvailable(fontName) {
+                        Text("font.unavailable")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
                     SliderRow(title: "annotate.fontSize",
                               value: $fontSize,
@@ -302,6 +320,13 @@ struct TextAnnotationEditor: View {
 
                 if case .edit(let id) = mode {
                     Section {
+                        Button {
+                            commit()
+                            model.activeTool = .move(id)
+                            dismiss()
+                        } label: {
+                            Label("annotate.move", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                        }
                         Button(role: .destructive) {
                             model.removeAnnotation(id)
                             dismiss()
@@ -328,6 +353,10 @@ struct TextAnnotationEditor: View {
             }
         }
         .onAppear(perform: load)
+        .sheet(isPresented: $isFontPickerPresented) {
+            SystemFontPicker(selection: $fontName) { isFontPickerPresented = false }
+                .ignoresSafeArea()
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
@@ -374,134 +403,6 @@ struct TextAnnotationEditor: View {
                 annotation.color = color
             }
         }
-    }
-}
-
-// MARK: - Fonts
-
-/// Every font family on the device, each row drawn in its own face. Fonts the
-/// user installed (configuration profiles, the Fonts settings pane) are listed
-/// first under their own heading so they are not lost among the system's
-/// hundred families.
-struct FontPickerView: View {
-    @Binding var selection: String?
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var families: [AnnotationFonts.Family] = []
-    @State private var query = ""
-
-    var body: some View {
-        List {
-            Section {
-                row(title: NSLocalizedString("font.system", comment: ""),
-                    face: nil,
-                    isSelected: selection == nil)
-            }
-
-            let visible = filtered
-            let installed = visible.filter(\.isUserInstalled)
-            if !installed.isEmpty {
-                Section("font.section.installed") {
-                    ForEach(installed) { family in familyRow(family) }
-                }
-            }
-            Section(LocalizedStringKey(installed.isEmpty ? "font.section.all" : "font.section.system")) {
-                ForEach(visible.filter { !$0.isUserInstalled }) { family in familyRow(family) }
-            }
-            if installed.isEmpty, query.isEmpty {
-                Section {
-                    Text("font.installed.hint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .searchable(text: $query, prompt: Text("font.search"))
-        .navigationTitle("annotate.font")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            if families.isEmpty { families = AnnotationFonts.installedFamilies() }
-        }
-    }
-
-    private var filtered: [AnnotationFonts.Family] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return families }
-        return families.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
-    }
-
-    @ViewBuilder
-    private func familyRow(_ family: AnnotationFonts.Family) -> some View {
-        let isSelected = selection.map { family.faces.contains($0) } ?? false
-        if family.faces.count > 1 {
-            NavigationLink {
-                FaceListView(family: family, selection: $selection)
-            } label: {
-                rowLabel(title: family.name, face: family.preferredFace, isSelected: isSelected)
-            }
-        } else {
-            row(title: family.name, face: family.preferredFace, isSelected: isSelected)
-        }
-    }
-
-    private func row(title: String, face: String?, isSelected: Bool) -> some View {
-        Button {
-            selection = face
-            dismiss()
-        } label: {
-            rowLabel(title: title, face: face, isSelected: isSelected)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func rowLabel(title: String, face: String?, isSelected: Bool) -> some View {
-        HStack {
-            Text(title)
-                .font(Font(AnnotationFonts.font(named: face, size: 17) as CTFont))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            Spacer()
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-/// The individual weights and styles of one family.
-private struct FaceListView: View {
-    let family: AnnotationFonts.Family
-    @Binding var selection: String?
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        List(family.faces, id: \.self) { face in
-            Button {
-                selection = face
-                dismiss()
-            } label: {
-                HStack {
-                    Text(AnnotationFonts.displayName(for: face))
-                        .font(Font(AnnotationFonts.font(named: face, size: 17) as CTFont))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Spacer()
-                    if selection == face {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(family.name)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

@@ -202,53 +202,35 @@ struct RedactStrip: View {
 
 // MARK: - Annotate
 
+/// Two rows, both always present: the options of the current drawing tool on
+/// top — every tool has its own set, and they stay in sight so nobody has to
+/// guess that a pen has a width or a text mark has a font — and the tools
+/// themselves underneath.
 struct AnnotateStrip: View {
     let model: WorkbenchViewModel
     @Binding var sheet: WorkbenchSheet?
 
-    @State private var isColorPopoverPresented = false
-    @State private var isWidthPopoverPresented = false
+    /// Height of the options row, which `WorkbenchView` adds to the strip.
+    static let optionsRowHeight: CGFloat = 46
 
     var body: some View {
-        Strip {
-            ForEach(AnnotationTool.allCases, id: \.self) { tool in
-                StripButton(title: LocalizedStringKey(tool.localizationKey),
-                            systemImage: Self.symbol(for: tool),
-                            isSelected: model.activeTool == .annotation(tool)) {
-                    model.activeTool = model.activeTool == .annotation(tool) ? .none : .annotation(tool)
+        VStack(spacing: 0) {
+            AnnotationOptionsRow(model: model, tool: model.activeTool.annotationTool ?? model.lastAnnotationTool)
+                .frame(height: Self.optionsRowHeight)
+            Divider().padding(.horizontal, 12)
+            Strip {
+                ForEach(AnnotationTool.allCases, id: \.self) { tool in
+                    StripButton(title: LocalizedStringKey(tool.localizationKey),
+                                systemImage: Self.symbol(for: tool),
+                                isSelected: model.activeTool == .annotation(tool)) {
+                        model.activeTool = model.activeTool == .annotation(tool) ? .none : .annotation(tool)
+                    }
                 }
-            }
-
-            Button {
-                isColorPopoverPresented = true
-            } label: {
-                StripItemLabel(title: "annotate.color",
-                               systemImage: "circle.fill",
-                               swatch: Color(model.strokeColor.uiColor))
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isColorPopoverPresented, arrowEdge: .bottom) {
-                ColorSwatchRow(selection: Binding(get: { model.strokeColor },
-                                                 set: { model.strokeColor = $0 }))
-                    .padding(14)
-                    .presentationCompactAdaptation(.popover)
-            }
-
-            Button {
-                isWidthPopoverPresented = true
-            } label: {
-                StripItemLabel(title: "annotate.width", systemImage: "lineweight")
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isWidthPopoverPresented, arrowEdge: .bottom) {
-                StrokeSettingsPopover(model: model)
-                    .presentationCompactAdaptation(.popover)
-            }
-
-            StripButton(title: "annotate.section.marks",
-                        systemImage: "list.bullet.rectangle",
-                        badge: model.document.state.annotations.count) {
-                sheet = .annotationHistory
+                StripButton(title: "annotate.section.marks",
+                            systemImage: "list.bullet.rectangle",
+                            badge: model.document.state.annotations.count) {
+                    sheet = .annotationHistory
+                }
             }
         }
     }
@@ -267,28 +249,131 @@ struct AnnotateStrip: View {
     }
 }
 
-/// Width, fill and text size for the *next* mark.
-private struct StrokeSettingsPopover: View {
+/// The settings of one drawing tool for the *next* mark, laid out in a single
+/// scrolling row: colour for everything; width for strokes and shapes; fill for
+/// shapes; font and size for text; size and the upcoming number for badges.
+private struct AnnotationOptionsRow: View {
     let model: WorkbenchViewModel
+    let tool: AnnotationTool
+
+    @State private var isFontPickerPresented = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SliderRow(title: "annotate.width",
-                      value: Binding(get: { model.strokeWidth }, set: { model.strokeWidth = $0 }),
-                      range: 0.001...0.03,
-                      step: 0.001,
-                      display: { String(format: "%.1f", $0 * 1000) })
-            SliderRow(title: "annotate.fontSize",
-                      value: Binding(get: { model.fontSize }, set: { model.fontSize = $0 }),
-                      range: 0.015...0.09,
-                      step: 0.005,
-                      display: { String(format: "%.1f", $0 * 1000) })
-            Toggle("annotate.filled", isOn: Binding(get: { model.isShapeFilled },
-                                                    set: { model.isShapeFilled = $0 }))
-                .font(.subheadline)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                Image(systemName: AnnotateStrip.symbol(for: tool))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+
+                ColorSwatchRow(selection: Binding(get: { model.strokeColor },
+                                                 set: { model.strokeColor = $0 }),
+                               diameter: 20,
+                               spacing: 6)
+
+                switch tool {
+                case .pen, .highlighter, .arrow, .line:
+                    widthControl
+                case .rectangle, .ellipse:
+                    widthControl
+                    fillToggle
+                case .text:
+                    fontButton
+                    sizeControl
+                case .numberBadge:
+                    sizeControl
+                    nextNumber
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(maxHeight: .infinity)
         }
-        .padding(14)
-        .frame(width: 280)
+        .scrollBounceBehavior(.basedOnSize)
+        .sheet(isPresented: $isFontPickerPresented) {
+            SystemFontPicker(selection: Binding(get: { model.fontName }, set: { model.fontName = $0 })) {
+                isFontPickerPresented = false
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var widthControl: some View {
+        InlineSlider(systemImage: "lineweight",
+                     value: Binding(get: { model.strokeWidth }, set: { model.strokeWidth = $0 }),
+                     range: 0.001...0.03,
+                     display: String(format: "%.1f", model.strokeWidth * 1000))
+    }
+
+    private var sizeControl: some View {
+        InlineSlider(systemImage: "textformat.size",
+                     value: Binding(get: { model.fontSize }, set: { model.fontSize = $0 }),
+                     range: 0.015...0.12,
+                     display: String(format: "%.0f", model.fontSize * 1000))
+    }
+
+    private var fillToggle: some View {
+        Button {
+            model.isShapeFilled.toggle()
+        } label: {
+            Label(model.isShapeFilled ? "annotate.filled" : "annotate.outline",
+                  systemImage: model.isShapeFilled ? "square.fill" : "square")
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(model.isShapeFilled ? .accentColor : .secondary)
+    }
+
+    private var fontButton: some View {
+        Button {
+            isFontPickerPresented = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "textformat")
+                    .font(.caption)
+                Text(AnnotationFonts.displayName(for: model.fontName))
+                    .font(Font(AnnotationFonts.font(named: model.fontName, size: 13) as CTFont))
+                    .lineLimit(1)
+                    .frame(maxWidth: 150)
+            }
+            .fixedSize()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(.secondary)
+    }
+
+    private var nextNumber: some View {
+        Text("#\(model.document.state.nextBadgeNumber)")
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+    }
+}
+
+/// Icon, short slider, read-out — a slider that fits in a toolbar row.
+private struct InlineSlider: View {
+    let systemImage: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let display: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Slider(value: $value, in: range)
+                .frame(width: 110)
+            Text(display)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 26, alignment: .leading)
+        }
     }
 }
 

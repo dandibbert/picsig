@@ -324,6 +324,23 @@
         }
       }
     },
+    "adjust.watermark.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Watermark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除水印"
+          }
+        }
+      }
+    },
     "adjust.watermark.size": {
       "extractionState": "manual",
       "localizations": {
@@ -337,6 +354,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "字号"
+          }
+        }
+      }
+    },
+    "adjust.watermark.style": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Style"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "样式"
           }
         }
       }
@@ -449,13 +483,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tap a mark to change its color, width, text or font."
+            "value": "Tap a mark to change its color, width, text, font or position."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "点击一条标注可修改颜色、粗细、文字或字体。"
+            "value": "点击一条标注可修改颜色、粗细、文字、字体或位置。"
           }
         }
       }
@@ -473,6 +507,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "这条标注已被删除"
+          }
+        }
+      }
+    },
+    "annotate.move": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移动位置"
+          }
+        }
+      }
+    },
+    "annotate.move.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag on the canvas to move the mark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在画布上拖动以移动标注"
           }
         }
       }
@@ -1374,6 +1442,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "系统字体"
+          }
+        }
+      }
+    },
+    "font.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This font is not available on this device; the system font will be used."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个字体在本机不可用，将以系统字体显示。"
           }
         }
       }

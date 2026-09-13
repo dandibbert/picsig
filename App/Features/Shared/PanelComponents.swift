@@ -56,14 +56,16 @@ struct SliderRow: View {
 struct ColorSwatchRow: View {
     @Binding var selection: RGBAColor
     var colors: [RGBAColor] = RGBAColor.palette
+    var diameter: CGFloat = 26
+    var spacing: CGFloat = 8
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: spacing) {
             ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
                 let isSelected = color == selection
                 Circle()
                     .fill(Color(color.uiColor))
-                    .frame(width: 26, height: 26)
+                    .frame(width: diameter, height: diameter)
                     .overlay {
                         Circle().strokeBorder(Color(.separator), lineWidth: 0.5)
                     }
@@ -212,7 +214,7 @@ struct StripItemLabel: View {
 struct DetailSheet<Content: View>: View {
     let title: LocalizedStringKey
     var detents: Set<PresentationDetent> = [.medium, .large]
-    var onDone: () -> Void = {}
+    var onDone: @MainActor () -> Void = {}
     @ViewBuilder let content: Content
 
     @Environment(\.dismiss) private var dismiss
@@ -316,5 +318,39 @@ struct NoticeRow: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Like `DetailSheet`, for content that is a `Form`: grouped rows, the same
+/// half-height presentation with the canvas live behind it.
+struct FormSheet<Content: View>: View {
+    let title: LocalizedStringKey
+    var detents: Set<PresentationDetent> = [.medium, .large]
+    var onDone: @MainActor () -> Void = {}
+    @ViewBuilder let content: Content
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                content
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("common.done") {
+                        onDone()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents(detents)
+        .presentationDragIndicator(.visible)
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .presentationContentInteraction(.scrolls)
     }
 }

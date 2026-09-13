@@ -184,7 +184,7 @@ struct WorkbenchView: View {
             case .adjust: AdjustStrip(model: model, sheet: $sheet)
             }
         }
-        .frame(height: 78)
+        .frame(height: 78 + (tab == .annotate ? AnnotateStrip.optionsRowHeight + 1 : 0))
         .frame(maxWidth: .infinity)
         .background(Color(.systemBackground))
         .overlay(alignment: .top) { Divider() }
@@ -240,9 +240,9 @@ struct WorkbenchView: View {
         case .editAnnotation(let id):
             AnnotationEditorSheet(model: model, annotationID: id)
         case .tone:
-            DetailSheet(title: "adjust.section.tone") { AdjustPanel(model: model, section: .tone) }
+            ToneSheet(model: model)
         case .watermark:
-            DetailSheet(title: "adjust.section.watermark") { AdjustPanel(model: model, section: .watermark) }
+            WatermarkSheet(model: model)
         case .exportOptions:
             DetailSheet(title: "export.options") { ExportPanel(model: model) }
         }
