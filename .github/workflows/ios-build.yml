@@ -36,6 +36,17 @@ jobs:
             -project PicSig.xcodeproj \
             -scheme PicSig
 
+      - name: Pick a simulator
+        id: sim
+        run: |
+          # Whatever iPhone the runner's Xcode ships with, rather than a pinned name
+          # that silently disappears on the next image update.
+          UDID=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys;ds=json.load(sys.stdin)['devices'];print(next(d['udid'] for rt in sorted(ds,reverse=True) for d in ds[rt] if 'iPhone' in d['name']))")
+          NAME=$(xcrun simctl list devices available | grep "$UDID" | sed 's/ (.*//' | sed 's/^ *//')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using $NAME ($UDID)"
+
       - name: Build for iOS Simulator
         run: |
           set -o pipefail
@@ -43,10 +54,52 @@ jobs:
             -project PicSig.xcodeproj \
             -scheme PicSig \
             -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/dd \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             | tee build-simulator.log
+
+      # Compiling proves it links; launching proves the SwiftUI graph, the
+      # @Observable models and the asset/localisation lookups actually stand up at
+      # runtime. A crash on the first screen would otherwise reach a real device.
+      - name: Launch in simulator
+        run: |
+          set -x
+          APP="build/dd/Build/Products/Debug-iphonesimulator/PicSig.app"
+          test -d "$APP"
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
+          rm -rf ~/Library/Logs/DiagnosticReports/*
+          xcrun simctl launch "${{ steps.sim.outputs.udid }}" com.picsig.longshot
+          sleep 12
+          set +x
+
+          # simctl launch reports success as soon as the process spawns, so a crash a
+          # moment later still looks like a pass. Check for the process and a report.
+          if xcrun simctl spawn "${{ steps.sim.outputs.udid }}" launchctl list 2>/dev/null | grep -q picsig; then
+            echo "app is still running"
+          else
+            echo "app is not running any more"
+            found=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i picsig || true)
+            if [ -n "$found" ]; then
+              echo "--- crash report ---"
+              cat ~/Library/Logs/DiagnosticReports/*PicSig* 2>/dev/null | head -80
+            fi
+            exit 1
+          fi
+
+          mkdir -p build/screenshots
+          xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot build/screenshots/home.png
+          ls -lh build/screenshots
+
+      - name: Upload launch screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-screenshot
+          path: build/screenshots
+          if-no-files-found: warn
 
       - name: Archive for device (unsigned)
         run: |
