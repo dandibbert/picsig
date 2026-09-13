@@ -49,19 +49,26 @@ final class ImagingTests: XCTestCase {
         return pixels
     }
 
-    /// Generates vertically unique, high-texture rows without a deeply nested drawing closure.
-    /// Exact repeated viewport content should therefore have one unambiguous overlap.
-    private func makeScrollDocument(width: Int, height: Int) throws -> CGImage {
-        let canvasWidth = CGFloat(width)
-        return try image(width: width, height: height) { context in
-            context.setFillColor(UIColor.white.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: canvasWidth, height: CGFloat(height)))
+    private func textureByte(_ seed: UInt64) -> UInt8 {
+        var value = seed &+ 0x9E3779B97F4A7C15
+        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+        value ^= value >> 31
+        return UInt8(truncatingIfNeeded: value >> 24)
+    }
 
+    /// Generates deterministic, non-periodic 2D texture so there is only one valid viewport overlap.
+    private func makeScrollDocument(width: Int, height: Int) throws -> CGImage {
+        let half = max(1, width / 2)
+        return try image(width: width, height: height) { context in
             for row in 0..<height {
-                let seed = (row * 73 + row * row * 19 + 41) % 223
-                let level = CGFloat(seed + 16) / 255.0
-                context.setFillColor(UIColor(white: level, alpha: 1).cgColor)
-                context.fill(CGRect(x: 0, y: CGFloat(row), width: canvasWidth, height: 1))
+                let y = CGFloat(row)
+                let left = CGFloat(textureByte(UInt64(row) &* 2)) / 255.0
+                let right = CGFloat(textureByte(UInt64(row) &* 2 &+ 1)) / 255.0
+                context.setFillColor(UIColor(white: left, alpha: 1).cgColor)
+                context.fill(CGRect(x: 0, y: y, width: CGFloat(half), height: 1))
+                context.setFillColor(UIColor(white: right, alpha: 1).cgColor)
+                context.fill(CGRect(x: CGFloat(half), y: y, width: CGFloat(width - half), height: 1))
             }
         }
     }
