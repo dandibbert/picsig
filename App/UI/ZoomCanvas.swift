@@ -87,7 +87,7 @@ struct ZoomCanvas: UIViewRepresentable {
         private func point(_ gesture: UIGestureRecognizer) -> Point2D {
             guard let view = scroll?.surface else { return Point2D(0, 0) }
             let p = gesture.location(in: view)
-            return Point2D(min(1, max(0, p.x / max(1, view.bounds.width))), min(1, max(0, p.y / max(1, view.bounds.height))))
+            return Point2D(Double(min(1, max(0, p.x / max(1, view.bounds.width)))), Double(min(1, max(0, p.y / max(1, view.bounds.height)))))
         }
         private func rectangle(_ a: Point2D, _ b: Point2D) -> Box { Box(min(a.x, b.x), min(a.y, b.y), abs(a.x - b.x), abs(a.y - b.y)) }
         @objc func tap(_ gesture: UITapGestureRecognizer) {
@@ -106,7 +106,7 @@ struct ZoomCanvas: UIViewRepresentable {
                     initialBox = mask.rect
                     let corners = [Point2D(mask.rect.x, mask.rect.y), Point2D(mask.rect.maxX, mask.rect.y), Point2D(mask.rect.x, mask.rect.maxY), Point2D(mask.rect.maxX, mask.rect.maxY)]
                     let zoom = scroll?.zoomScale ?? 1
-                    if let index = corners.indices.min(by: { distance(corners[$0], current) < distance(corners[$1], current) }), distance(corners[index], current) < 32 / max(0.1, zoom) { corner = index }
+                    if let index = corners.indices.min(by: { distance(corners[$0], current) < distance(corners[$1], current) }), distance(corners[index], current) < CGFloat(32) / max(CGFloat(0.1), zoom) { corner = index }
                 }
             }
             if points.count < 4000 { points.append(current) }
@@ -143,7 +143,7 @@ struct ZoomCanvas: UIViewRepresentable {
         }
         private func distance(_ a: Point2D, _ b: Point2D) -> CGFloat {
             guard let size = scroll?.surface.bounds.size else { return .infinity }
-            return hypot((a.x - b.x) * size.width, (a.y - b.y) * size.height)
+            return hypot(CGFloat(a.x - b.x) * size.width, CGFloat(a.y - b.y) * size.height)
         }
     }
 }
