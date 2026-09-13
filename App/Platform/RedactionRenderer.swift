@@ -14,9 +14,10 @@ import PicSigCore
 /// * Replacement text is drawn on an opaque plate, so the original never shows
 ///   through the new glyphs.
 enum RedactionRenderer {
-    /// Creating a `CIContext` is expensive; one masked screenshot can contain
-    /// dozens of blurred areas. `CIContext` is thread safe, and masking always
-    /// runs off the main actor, so sharing one instance across tasks is fine.
+    /// Creating a `CIContext` is expensive, so the tone adjustments in
+    /// `ImageComposer` share one. `CIContext` is thread safe, and composition
+    /// always runs off the main actor, so sharing one instance across tasks is fine.
+    /// Masking itself no longer uses Core Image — see `blurred(_:radius:)`.
     nonisolated(unsafe) static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
 
     struct Options {
@@ -144,29 +145,71 @@ enum RedactionRenderer {
         }
         // Blur a slightly larger area so the edges do not stay sharp, then clip
         // back to the requested rectangle.
-        let padding = rect.height * 0.5
-        let sampleRect = rect.insetBy(dx: -padding, dy: -padding)
-            .intersection(CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
-        guard let cropped = cgImage.cropping(to: sampleRect) else {
+        let padding = max(4, rect.height * 0.5)
+        let bounds = CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: CGFloat(cgImage.height))
+        let sampleRect = rect.insetBy(dx: -padding, dy: -padding).intersection(bounds).integral
+        guard !sampleRect.isEmpty, let cropped = cgImage.cropping(to: sampleRect) else {
             drawSolid(rect: rect, context: context)
             return
         }
 
-        let radius = max(4, rect.height * 0.45 * CGFloat(max(0.2, item.strength)))
-        let base = CIImage(cgImage: cropped)
-        let blurred = base
-            .clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
-            .cropped(to: base.extent)
-        guard let output = sharedCIContext.createCGImage(blurred, from: blurred.extent) else {
+        let radius = blurRadius(for: rect, strength: item.strength)
+        guard let blurred = blurred(cropped, radius: radius) else {
             drawSolid(rect: rect, context: context)
             return
         }
 
         context.cgContext.saveGState()
         context.cgContext.clip(to: rect)
-        UIImage(cgImage: output).draw(in: sampleRect)
+        context.cgContext.interpolationQuality = .high
+        blurred.draw(in: sampleRect)
         context.cgContext.restoreGState()
+    }
+
+    /// Radius in pixels: a quarter of the text height already makes a line
+    /// unreadable, and full strength smears it into a soft band of the line's own
+    /// colours — still visibly a blur, not a block.
+    static func blurRadius(for rect: CGRect, strength: Double) -> CGFloat {
+        max(3, rect.height * CGFloat(0.15 + 0.4 * min(1, max(0.2, strength))))
+    }
+
+    /// Blur by resampling: shrink until one pixel spans about `radius` source
+    /// pixels, smooth once more at half that size, then scale back up with bicubic
+    /// interpolation.
+    ///
+    /// This runs on the CPU in Core Graphics. The previous Core Image version fell
+    /// back to a solid block whenever the context could not render — which is why
+    /// "blur" and "solid" used to come out identical — and a resample has no
+    /// context, no GPU texture limit for a 20000 pixel stitch, and gives the same
+    /// pixels on every device.
+    static func blurred(_ image: CGImage, radius: CGFloat) -> UIImage? {
+        let full = CGSize(width: image.width, height: image.height)
+        guard full.width >= 1, full.height >= 1, radius > 0 else { return nil }
+
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.scale = 1
+        format.opaque = true
+
+        func resample(_ source: UIImage, to size: CGSize) -> UIImage {
+            UIGraphicsImageRenderer(size: size, format: format).image { context in
+                context.cgContext.interpolationQuality = .high
+                source.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
+        func shrunk(_ size: CGSize, by factor: CGFloat) -> CGSize {
+            CGSize(width: max(1, (size.width / factor).rounded(.up)),
+                   height: max(1, (size.height / factor).rounded(.up)))
+        }
+
+        let factor = max(2, radius)
+        let small = shrunk(full, by: factor)
+        let tiny = shrunk(small, by: 2)
+
+        // Two passes: a single shrink is a box average whose footprint shows as a
+        // faint grid when scaled back up; averaging the average rounds it off.
+        let first = resample(UIImage(cgImage: image), to: small)
+        let second = resample(resample(first, to: tiny), to: small)
+        return resample(second, to: full)
     }
 
     private static func drawSolid(rect: CGRect, context: UIGraphicsImageRendererContext) {
